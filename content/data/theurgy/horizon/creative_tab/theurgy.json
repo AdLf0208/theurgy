@@ -1,0 +1,13 @@
+{
+  "icon": "theurgy:calcination_oven",
+  "items": [
+    "theurgy:alchemical_salt",
+    "theurgy:alchemical_salt_creature",
+    "theurgy:alchemical_salt_mineral",
+    "theurgy:alchemical_salt_plant",
+    "theurgy:alchemical_salt_strata",
+    "theurgy:calcination_oven",
+    "theurgy:pyromantic_brazier"
+  ],
+  "title": "Theurgy"
+}

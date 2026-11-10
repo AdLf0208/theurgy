@@ -1,0 +1,10 @@
+{
+  "variants": {
+    "lit=false": {
+      "model": "minecraft:block/furnace"
+    },
+    "lit=true": {
+      "model": "minecraft:block/furnace_on"
+    }
+  }
+}

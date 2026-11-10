@@ -1,0 +1,20 @@
+{
+  "default_state": {
+    "lit": "false"
+  },
+  "properties": {
+    "explosion_resistance": 1.0,
+    "hardness": 1.0,
+    "light": 0,
+    "map_color": 6,
+    "occludes": false,
+    "requires_tool": false,
+    "sounds": "minecraft:copper_block"
+  },
+  "state_properties": {
+    "lit": {
+      "type": "boolean"
+    }
+  },
+  "template": "minecraft:copper_block"
+}

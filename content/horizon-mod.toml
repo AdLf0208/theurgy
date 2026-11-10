@@ -1,0 +1,9 @@
+# Theurgy's content half: the calcination oven, the pyromantic brazier and
+# the five alchemical salts. Models and textures are upstream's
+# (CC-BY-4.0); see ../../LICENSE-CC-BY-4.0 and CONTENT.md.
+id = "theurgy"
+name = "Theurgy"
+version = "0.1.0"
+api = "0.2"
+side = "both"
+capabilities = ["registries"]

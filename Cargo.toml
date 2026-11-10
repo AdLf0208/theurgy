@@ -1,0 +1,18 @@
+[package]
+# Ported from: Theurgy 1.78.0 (klikli-dev/theurgy, MIT AND CC-BY-4.0), Minecraft
+# Java 1.21.1 NeoForge. Local-only until the maintainer approves publishing.
+name = "horizon-theurgy"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT AND CC-BY-4.0"
+description = "Theurgy for Horizon: the calcination oven and its pyromantic brazier"
+
+[lib]
+# This exact source is also injected as a same-crate module by horizon-mixins.
+path = "mixins/theurgy/runtime.rs"
+
+[dependencies]
+
+[workspace]
+resolver = "2"
