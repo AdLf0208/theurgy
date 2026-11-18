@@ -1,0 +1,16 @@
+[package]
+# Ported from: Theurgy 1.78.0 (klikli-dev/theurgy, MIT AND CC-BY-4.0), Minecraft
+# Java 1.21.1 NeoForge. Local-only until the maintainer approves publishing
+# (ARCHITECTURE.md §8). The Cargo package name is not the mod's identity: the
+# only identity is `id` in horizon-mod.toml.
+name = "horizon-theurgy"
+version = "0.2.0"
+edition = "2024"
+license = "MIT AND CC-BY-4.0"
+description = "Theurgy for Horizon: the calcination oven and its pyromantic brazier"
+
+[dependencies]
+# The pinned SDK's API crate, fetched into .horizon/sdk/ by any `cargo horizon-mod`
+# command (the launcher builds against its own copy of the same build). Any other
+# registry dependency must be pinned with `horizon-launcher native-lock .` first.
+horizon-mod-api = { path = ".horizon/sdk/api/crates/horizon-mod-api" }
