@@ -1,19 +1,30 @@
-# Theurgy — a Horizon port
+# Theurgy — Horizon port (slice 1: the calcination oven)
 
-**Theurgy** is a Minecraft mod. An open-source magic mod built around classical alchemy to replicate and transmutate matter, and create magical artifacts. This repository is a **port of it to [Horizon](https://github.com/horizon-rust/horizon)**, the Rust engine for Minecraft Java 26.3. It carries the complete source of the port plus the content files it ships, and installs as a single `.hmod` package.
+A native Horizon port of **Theurgy 1.78.0** (`klikli-dev/theurgy`): the **code is
+MIT**, the **assets are CC-BY-SA-4.0** — the licence text shipped at the carried tag
+says ShareAlike, and the port follows the text rather than the label. The Pyromantic
+Brazier burns furnace fuel, and the Calcination Oven above it turns one item into its
+alchemical salt — one blackstone into one Strata Salt, one packed ice into nine, one gem
+into two Mineral Salts, all in the jar's own 100 ticks.
 
-Upstream: [klikli-dev/theurgy](https://github.com/klikli-dev/theurgy) — licence **MIT**.
+**LOCAL-ONLY** until the maintainer approves publishing (ARCHITECTURE.md §8). The code's
+MIT is rank 0; the assets' share-alike is rank 1 (publishable under the same licence with
+attribution). See [`LICENSE-NOTICE.md`](LICENSE-NOTICE.md).
 
-| | |
-|---|---|
-| Upstream mod | Theurgy ([source](https://github.com/klikli-dev/theurgy)) |
-| Ported to | Horizon 0b14f8a, Minecraft Java 26.3, mod API `0.2` |
-| Package | `theurgy.hmod` (install it with the Horizon launcher) |
-| Licence | **MIT** — the upstream mod's licence; see [Licence and credit](#licence-and-credit) |
+Provenance is in [`FINDINGS.md`](FINDINGS.md), the carried and written content
+in [`CONTENT.md`](CONTENT.md), and the deviations, gaps and verification in
+[`notes.md`](notes.md).
 
-## What this port implements
+## One file
 
-### What the slice does
+`theurgy.hmod` is the deliverable: one flat SDK package (`api = "0.2"`) that
+carries the **code** (`horizon-mod.toml`, `Cargo.toml`, `src/`) **and the
+content** (`assets/`, `data/`) in the same archive. There is no embedded-content
+injection and no `.hnmod` any more — Horizon's mod-API merge (#16941, launcher
+≥ 0.2.70) retired that container, and the launcher compiles the package's Rust
+against its own pinned game build.
+
+## What the slice does
 
 * `theurgy:pyromantic_brazier` — one fuel slot, furnace-fuel burn times, a `lit`
   state that follows the burn; one coal is 1,600 ticks = 16 crafts.
@@ -29,47 +40,42 @@ Upstream: [klikli-dev/theurgy](https://github.com/klikli-dev/theurgy) — licenc
 * `/theurgy info <pos>`, `/theurgy recipe <item>` and `/theurgy recipes` for the
   harness and for players who want the jar's numbers in text.
 
-## Not yet ported
-
-- **The other nine processes**: distillation (mercury shards, 45 recipes),
-- **The other items**: 287 alchemical sulfurs, 19 niters, mercury shard/crystal,
-- **The apparatus not carried**: distiller, liquefaction cauldron, fermentation
-- **Heat beyond the brazier**: the Caloric Flux Emitter (remote heat over 8
-- **Client half**: GeckoLib renderers (the oven's animated body, the lit rings),
-- **Advancements** (9) and the two block tags the jar declares only for its ores.
-- **Modded tag members**: only vanilla members exist in 26.3, so a tag ingredient
-- **Hoppers pulling from the oven's input** are allowed (upstream's combined
-
-## Installing
-
-1. Install the [Horizon launcher](https://github.com/horizon-rust/horizon/releases) (0.2.70 or newer).
-2. Add `theurgy.hmod` to the instance's mods.
-3. The package is pinned to a specific Horizon build; the launcher checks that pin.
-
-## Licence and credit
-
-Theurgy was created by its upstream authors; the code, models and assets in the original mod
-remain theirs and are used here under **MIT**. The Rust in this repository is a clean-room
-rewrite for Horizon, not a translation of the original source.
-
-- `LICENSE` — the upstream licence text.
-- `LICENSE-NOTICE.md` — what this port carries and where it came from.
-- The upstream project: https://github.com/klikli-dev/theurgy
-
-## Technical details
+## Layout
 
 ```
-horizon-mod.toml   package manifest (id, version, api, [native] pin)
-Cargo.toml         the crate; depends on `horizon-mod-api` from the fetched SDK
-src/               lib.rs (the one `impl Hooks`), runtime.rs (pure logic + tests), glue
-assets/ data/      the content the package ships
-tools/             content generators and the e2e scenario
+horizon-mod.toml            the only manifest: id, version 0.2.2, api 0.2, [native] pins
+Cargo.toml                  one crate; the only dependency is horizon-mod-api from .horizon/sdk/
+src/lib.rs                  the one `impl Hooks` and the two block-entity Parts
+src/runtime.rs              the pure engine: 86 recipes, the oven, the brazier (17 tests)
+src/support.rs              game glue: block entities, heat, clicks, commands (+ 6 tests)
+assets/theurgy/             carried models/textures + 26.3 blockstates, item definitions, lang
+data/theurgy/               block/item declarations, recipes, loot, tags, creative tab
+theurgy.hmod                the deliverable
+tools/
+  gen_tag_members.py        tag membership, resolved once into JSON
+  gen_recipes.py            the jar's recipes → src/runtime.rs (`--check` guards drift)
+  assemble_content.py       the jar's assets + this port's declarations → assets/ + data/
+  e2e.sh                    the in-game scenario (default / SELFTEST / CONTROL_GAME)
+  parse_info.py             `/theurgy info` → shell fields
+notes.md FINDINGS.md CONTENT.md
 ```
 
-- Build: `cargo horizon-mod build` (packages; it does not compile against the game).
-- Test: `cargo test`, `cargo clippy --all-targets -- -D warnings`.
-- In-game: `ports/tools/launcher-game.sh run theurgy` in the campaign tree, or install the
-  `.hmod` and play; the harness scenario is `tools/e2e.sh`.
+## Build
 
-This repository is generated from the campaign's port at `ports/theurgy/`; the port's own
-`notes.md` is the full record (decisions, traps, evidence).
+Every step goes through a build slot from the campaign root, with `CARGO_INCREMENTAL=0`:
+
+```sh
+cd ports/theurgy
+cargo test --offline                                  # 23 tests (17 runtime + 6 glue helpers)
+cargo clippy --all-targets --offline -- -D warnings
+cargo fmt --check
+rm -f Cargo.lock && cargo horizon-mod build           # -> target/horizon-mod/theurgy.hmod
+cp target/horizon-mod/theurgy.hmod ./theurgy.hmod
+cargo horizon-mod check theurgy.hmod
+cargo horizon-mod fits theurgy.hmod --build nightly
+```
+
+The in-game scenario needs a game the launcher built with this package
+(`horizon-launcher native-build ports/theurgy --instance <i> --trust-native-code`)
+and then `GAME=<that horizon-client> tools/e2e.sh`; no launcher exists in this
+environment, so the run is a recorded gap.

@@ -4,9 +4,14 @@ Ported from **Theurgy 1.78.0** (`theurgy-1.21.1-neoforge-1.78.0.jar`, SHA-256
 `2165c80889e24f30d3351941078247c37de238c59354eaf6bc1bb278af2bc7dd`) for
 Minecraft Java 1.21.1 NeoForge, upstream `klikli-dev/theurgy` at tag
 `release/v1.21.1-1.78.0` (commit `95c01bbbf9be19b21feea8b1c471e98bccea2a42`).
-**MIT AND CC-BY-4.0** (read from the jar's `META-INF/neoforge.mods.toml`) →
-**both licence rank 0**; see [`LICENSE-NOTICE.md`](LICENSE-NOTICE.md). Local-only
-until the maintainer approves publishing (ARCHITECTURE.md §8). Pin
+**MIT code / CC-BY-SA-4.0 assets** — the code is MIT (upstream's `LICENSES/MIT.txt` and the
+SPDX headers); the carried assets are **CC-BY-SA-4.0**, because the licence text shipped at
+the tag (`LICENSES/CC-BY-4.0.txt`) is the *Attribution-ShareAlike 4.0 International* legal
+code and upstream's own README at that tag says so — the `CC-BY-4.0` in `REUSE.toml` and the
+jar's `mods.toml` is a label, not terms (see the 2026-11-19 section below and
+[`LICENSE-NOTICE.md`](LICENSE-NOTICE.md)). Rank 0 for the code, rank 1 for the share-alike
+assets; both publishable. Local-only until the maintainer approves publishing
+(ARCHITECTURE.md §8). Pin
 **`1d63e0a5`** (`game.rs` `64813cf4…`), mixins **`5a64af93…`** (schema 6).
 
 Status: **ported-partial** — slice 1 (the calcination process: the pyromantic
@@ -30,7 +35,8 @@ The gap list below is the rest of the mod.
   **carried** from the jar; the block declarations, item declarations, blockstates,
   the `c:` tags, the process, the block entities, the clicks and the commands are
   the **agent port** ([`CONTENT.md`](CONTENT.md)).
-- **Licence:** MIT AND CC-BY-4.0, read from the jar → rank 0. Ported now because
+- **Licence:** code MIT, carried assets CC-BY-SA-4.0 (the text shipped at the tag governs —
+  see the 2026-11-19 section) → rank 0 / rank 1, publishable. Ported now because
   it is the rank-0 `content`/`deep` core mod the queue offers (`precheck-mod.py
   theurgy` → `DISPATCHABLE`), the first real alchemy machine chain in the pack,
   and the parent of `theurgy_kubejs`.
@@ -433,3 +439,148 @@ packed, which is why editing them does not change the artifact.)
 > **byte-identical** to the retired bundle's, the 86 recipes and all 50 content files are
 > carried unchanged, and the artifact is 60,047 B, sha256
 > `bab2b93cf4c96a89d037003f665614ba9019d2d1cc18edaeedbdedf1ec2b9cf8`.
+
+## Review fixes (2026-11-18)
+
+`var/review-all/1253-theurgy.md`, findings 1–2 fixed and 3 verified; version **0.2.1**
+(61,660 B, sha256 `215974404b1c2edd51cba2dc7e9447151faaa9dfb0d377482087bcc63528ea4f`).
+
+- **Brazier converts the stored fuel into the held type (src/support.rs:352).** An insert with a
+  different fuel in the slot rebuilt the stack as `ItemStack::new(held.item(), old + moved)`.
+  Now only the same item *and* components merges (`runtime::fuel_merges` plus
+  `same_components`); a different stack refuses the click, and the merged stack starts from the
+  stored stack (its components preserved), not from the held item id. Tests:
+  `only_the_same_fuel_merges_in_the_brazier`.
+- **Diagnostic disclosure (src/support.rs:106, :455–471).** `/theurgy info` read an apparatus's
+  input/output/fuel and counts at any loaded coordinates. It now needs an operator (permission
+  ≥ 2) or a player in the same level within 8 blocks; any other caller gets a generic refusal.
+  Rule: `runtime::may_inspect`, pinned by
+  `a_readout_needs_an_operator_reach_or_the_same_level`.
+- **Licence (mods/theurgy.toml:26) — *superseded on 2026-11-19, see the section below*.** This job
+  read only `REUSE.toml`'s label and shipped the CC BY 4.0 text; the next section proves that the
+  text and README at the tag both say ShareAlike, so the assets are CC-BY-SA-4.0.
+- **The in-game leg found a load refusal:** `r.block_part(oven, Oven)` plus
+  `r.block_entity_part(oven_type, Oven)` attached one Part twice, and the game refused the
+  package (`… is attached to theurgy:calcination_oven twice`). A block-entity Part is also the
+  block's Part at this pin, so the two `block_part` calls are gone; the game loads "content from
+  1 mod(s)" and every e2e step passes.
+
+Ladder: `cargo test` 25 passed; `cargo clippy --all-targets -- -D warnings` exit 0;
+`cargo fmt --check` clean; `cargo horizon-mod build` twice byte-identical; `check` exit 0 and
+`fits --build 0b14f8a` exit 0. In-game: `PASS` + `EXIT:0`
+(`ports/_shared/evidence/theurgy-e2e/e2e-launcher.log`); `GAME=$CONTROL_GAME` → `FAIL`
+(`Unknown block type 'theurgy:pyromantic_brazier'`) + `EXIT:1`.
+
+## Licence correction (2026-11-19) — the assets are CC-BY-SA-4.0; version 0.2.2
+
+The reviewer of #1253 was right, and the evidence is stronger than the `REUSE.toml` line alone.
+At the carried tag `release/v1.21.1-1.78.0` (commit `95c01bbb`, 2026-10-06) **two upstream documents
+say ShareAlike**:
+
+| Document | Says |
+|---|---|
+| `LICENSES/CC-BY-4.0.txt` — the licence **text** shipped for the assets (20,137 B) | **CC-BY-SA-4.0**: line 1 `Attribution-ShareAlike 4.0 International`; "The License Elements of this Public License are Attribution and ShareAlike"; Section 3(b) `ShareAlike.` |
+| `README.md` §Licensing, line 61 | **CC-BY-SA-4.0**: "Assets are licensed under the CC-BY-SA-4.0 license, view [LICENSES/CC-BY-SA-4.0](./LICENSES/CC-BY-4.0.txt)." |
+
+Only the **labels** — `REUSE.toml`'s `SPDX-License-Identifier = "CC-BY-4.0"` and the jar's
+`mods.toml` string — say CC-BY-4.0. A label names a licence; the text it names supplies the terms,
+and here the text and the author's own README both say ShareAlike. **The assets are CC-BY-SA-4.0;
+the code stays MIT.** The counter-check that this is not a stray word: the genuine CC BY 4.0 text
+(18,657 B, the file 0.2.1 shipped) has **0** "ShareAlike" occurrences and no Section 3(b), while the
+tag's file has **5** (lines 1, 57, 62, 111, 273) and the whole Section 3(b) obligation.
+
+**Upstream changed it after the release.** Commit `43a2d99cde46` on `version/1.21.1`
+(2026-11-16, "chore: fix licensing info inconsistency") replaced the ShareAlike text with the CC BY
+4.0 text (+102 −373) and changed the README line to match. It postdates 1.78.0 by six weeks, so it
+does not rewrite what the release shipped; and because ShareAlike *adds* an obligation rather than
+removing one, complying with it cannot breach the CC-BY-4.0 label either. A later slice re-cut from a
+jar built after 2026-11-16 can declare `CC-BY-4.0` if its own artefact says so — recorded here so
+nobody re-derives it. Full evidence (URLs, statuses, quoted clauses, commit diffs):
+`var/licence-theurgy.md` in the campaign root.
+
+### What changed in the package
+
+| File | Change |
+|---|---|
+| `LICENSE-CC-BY-4.0` (18,657 B, the genuine BY text) | **removed** — it is not the text upstream ships for this release |
+| `LICENSE-CC-BY-SA-4.0` | **added**, the tag's `LICENSES/CC-BY-4.0.txt` bytes verbatim (20,137 B, SHA-256 `5e436ff8…`), under the licence's real name |
+| `LICENSE-NOTICE.md` | rewritten: the allocation table, the two-documents evidence, the share-alike obligation, and the attribution (`© 2024 klikli-dev`; the brazier textures additionally `© 2026 quequn07-sys`, per upstream's later per-file `REUSE.toml`) |
+| `Cargo.toml` | `license = "MIT"` — one SPDX expression, the crate's own code; the asset licence is documented in the notice. `version = "0.2.2"` |
+| `horizon-mod.toml` | the licence comment states code MIT / assets CC-BY-SA-4.0 and which document governs; `version = "0.2.2"` |
+| `README.md`, `FINDINGS.md`, `CONTENT.md` | the same split, so no port document still claims `MIT AND CC-BY-4.0` |
+
+The registry entry should read **`license = "MIT AND CC-BY-SA-4.0"`** (the entry is the
+orchestrator's to edit). `MOD-POLICY.md` requires the entry's licence to be the one in the source
+repository, and that is what the repository now says.
+
+### A licence change must not change behaviour — it did not
+
+`src/` is byte-identical before and after this job:
+`src/lib.rs` `610c9acc…`, `src/runtime.rs` `0d88a37d…`, `src/support.rs` `555ddb45…`
+(the same hashes as the 0.2.1 tree). Only licence text, comments, `README.md` and the two version
+fields moved; the packed `src/` entries are unchanged, so the package's behaviour is the 0.2.1
+behaviour.
+
+### Verification (0.2.2)
+
+| Step | Result | Evidence |
+|---|---|---|
+| `cargo test --offline` | **25 passed**, 0 failed | `ports/_shared/evidence/theurgy/sdk-test.log` |
+| `cargo clippy --all-targets --offline -- -D warnings` | exit 0, 0 warnings | `…/sdk-clippy.log` |
+| `cargo fmt --check` | clean | `…/sdk-fmt.log` |
+| `cargo horizon-mod build`, twice | **63,679 B**, SHA-256 `5fe7edbdcb7cc45065727761656a261d646282c8155c8587d3a5d94d588cbc7a`, `cmp` identical | `…/sdk-build.log`, `…/sdk-build-second.log` |
+| `cargo horizon-mod check theurgy.hmod` | `theurgy 0.2.2 (native-mod, format native-1/0b14f8ac…/e59da909…, for 26.3)`, 63,679 B, exit 0 | `…/sdk-check.log` |
+| `cargo horizon-mod fits theurgy.hmod --build 0b14f8a` | `0b14f8a  made for`, exit 0 | `…/sdk-fits.log` |
+| `python3 ports/tools/verify-sdk-package.py theurgy` | **1/1**, every check ok (runtime byte-identical `0d88a37d…`, 61 entries, no packed `Cargo.lock`) | run in session |
+| in-game leg | **PASS** + `EXIT:0`, control leg inside the same run ("without the package: no oven item, the block stayed minecraft:air") | `ports/_shared/evidence/theurgy-e2e/e2e-launcher.log` |
+| control (the same Nightly, no package) | **FAIL** + `EXIT:1` (`Unknown item 'theurgy:calcination_oven'`, `Unknown block type 'theurgy:pyromantic_brazier'`) | `…/e2e-launcher-control.log` |
+| `python3 ports/tools/check-e2e-logs.py theurgy-e2e --strict` | `logs=2 ok=2 missing-exit=0 bad-exit=0`, exit 0 | run in session |
+
+The packed licence files are the four `LICENSE*` entries (`LICENSE`, `LICENSE-MIT`,
+`LICENSE-CC-BY-SA-4.0`, `LICENSE-NOTICE.md`); the package grew from 61,660 B to 63,679 B because the
+ShareAlike text is 20,137 B where the BY text was 18,657 B, plus the longer notice.
+
+Skills: superpowers/using-superpowers,systematic-debugging,verification-before-completion; BeautifulRust/rust-best-practices
+
+## 26.3 dialect sweep (2026-11-21) — carried recipes and loot tables, proven in game (0.2.3)
+
+The shared checker `ports/tools/check_261_dialect.py` (generalised from `ports/modularrouters/tools/data_shape.py`
+and `ports/createaddition/tools/data_shape.py`) found the 1.21.1 forms still in the package that had shipped
+at **0.2.2**; `cargo horizon-mod check`, `fits` and every unit test had passed on them, and the content
+was dead in game (a recipe returns nothing; a block drops empty).
+
+| Family | Files | 1.21.1 form that shipped | 26.3 form |
+|---|---|---|---|
+| recipe ingredients | 2 (`calcination_oven`, `pyromantic_brazier`): `{"tag": …}` (`c:storage_blocks/copper`, `c:ingots/iron`, `c:stones`) in `key` | `{"item": "…"}` / `{"tag": "…"}` | `"minecraft:…"` / `"#c:…"` |
+| loot pools | 2 (`calcination_oven`, `pyromantic_brazier`): already singular-conditioned, but with `bonus_rolls` and `"rolls": 1.0` | `"conditions": [ … ]`, `bonus_rolls`, `"rolls": 1.0` | one `"condition": {"type": "minecraft:…"}`, no `bonus_rolls`, `"rolls": 1` |
+
+Both loot tables dropped correctly before the sweep (their condition was singular); only the pool fields were normalised, and the loot phase reports n/a because neither table was in the array form.
+
+**Red, kept:** `ports/_shared/evidence/theurgy/dialect-check-red.log` — the checker exits 1 on the pre-fix
+package itself (`dialect-prefix-0.2.2.hmod`, 0.2.2, kept in the same folder), naming every file.
+A reconstructed fixture carrying all three loot shapes plus a `requires_tool` block with no mineable tag is
+red too (`../../morered/dialect-check-fixture-red.log`). The checker's `--selftest` fails when any shape is
+accepted.
+
+  `recipe calcination_oven.json: crafting_shaped -> {"count": 1, "item": "theurgy:calcination_oven", "slot": 200}`; `the result reached the inventory (1 theurgy:calcination_oven), the grid emptied, and minecraft:copper_block was consumed`
+
+  `n/a: this port's loot tables were already in the 26.3 form`
+
+The in-game leg is `tools/e2e-dialect.sh` (`ports/_shared/evidence/theurgy/e2e-dialect.log`): `PASS` + `EXIT:0`,
+and `SELFTEST=1` inverts the expectation and ends `FAIL` + `EXIT:1` (`e2e-dialect-selftest.log`).
+`check-e2e-logs.py theurgy --strict` exits 0.
+
+**Ladder** (all in `build-slot.sh` leases, `CARGO_INCREMENTAL=0`, `BUILD_LOCAL=1`):
+
+| Step | Command | Result |
+|---|---|---|
+| tests | `cargo test --offline` | **25 passed**, 0 failed (`dialect-test.log`) |
+| package | `rm -f Cargo.lock && cargo horizon-mod build` (twice) | built against **0a875da** (re-pinned from 0b14f8a), second build `cmp`-identical (`dialect-build-1.log`, `dialect-build-2.log`) |
+| registry check | `cargo horizon-mod check theurgy.hmod` | `theurgy 0.2.3 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)`, **63,629 B**, sha256 `9e2d1543215a…` (`dialect-check.log`) |
+| fits the pin | `cargo horizon-mod fits theurgy.hmod --build 0a875da` | `0a875da  made for`, exit 0 (`dialect-fits-0a875da.log`) |
+| fits the previous build | `… --build 0b14f8a` | `does not fit`, exit 1 (`dialect-fits-0b14f8a.log`) |
+| the gate | `python3 ports/tools/verify-sdk-package.py theurgy` | **1/1** (`dialect-gate.log`) |
+
+Package 0.2.3: **63,629 B**, SHA-256 `9e2d1543215a32116a2ecc7f435da10390498f2c986657ce030ddeb849f33805`.
+
+Skills: superpowers/using-superpowers,systematic-debugging,test-driven-development,verification-before-completion; BeautifulRust/none (no Rust change)

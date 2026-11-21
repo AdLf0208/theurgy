@@ -12,7 +12,7 @@ decompiled.
 | Jar SHA-256 | `2165c80889e24f30d3351941078247c37de238c59354eaf6bc1bb278af2bc7dd` |
 | Jar SHA-1 | `3e8ff57bae6610f4310ea4dfd6654b7cd8e891ca` |
 | Mod id / version | `theurgy` / `1.78.0` (Minecraft 1.21.1, NeoForge `[21.0.110-beta,)`) |
-| Licence (jar `META-INF/neoforge.mods.toml`) | **`MIT AND CC-BY-4.0`** — both rank 0. The mod id's own code is MIT; its assets are CC-BY-4.0 (`REUSE.toml`, `LICENSES/` in the repo). Both texts are kept in the port (`LICENSE-MIT`, `LICENSE-CC-BY-4.0`). |
+| Licence | **Code MIT, carried assets CC-BY-SA-4.0** (rank 0 / rank 1). The jar's `mods.toml` and upstream's `REUSE.toml` say `CC-BY-4.0`, but the licence text shipped at the tag (`LICENSES/CC-BY-4.0.txt`) is the *Attribution-ShareAlike 4.0 International* legal code and upstream's README at that tag says "Assets are licensed under the CC-BY-SA-4.0 license" — the text governs. The port keeps `LICENSE-MIT` and ships the upstream text as `LICENSE-CC-BY-SA-4.0`; see `LICENSE-NOTICE.md` and `var/licence-theurgy.md`. Upstream changed the stated asset licence to CC-BY-4.0 on 2026-11-16 (`43a2d99c`), after this release. |
 | Upstream repo | <https://github.com/klikli-dev/theurgy>, tag `release/v1.21.1-1.78.0`, commit `95c01bbbf9be19b21feea8b1c471e98bccea2a42` (shallow clone, read at `/tmp/opencode/theurgy-121`, deleted after this file) |
 | Required dependencies | `neoforge`, `modonomicon`, `geckolib` (required), `almostunified`/`jei`/`jade` (optional) |
 

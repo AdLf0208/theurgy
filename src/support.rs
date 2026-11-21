@@ -13,12 +13,15 @@ use std::sync::atomic::{AtomicI64, Ordering};
 
 use mod_api::{
     BlockClick, BlockEntityRef, BlockEntityTickEvent, Command, CommandArgument,
-    CommandArgumentValue, Compound, Flow, Host, HostTransaction, Identifier, InteractionResult,
-    ItemKey, ItemPlace, ItemResource, ItemStack, LevelRef, ModBlockEntityView, ModContainer,
-    Registrar, RunModCommandEvent, ServerHost, Tag, Text, UseItemOnEvent, UseWithoutItemEvent,
+    CommandArgumentValue, CommandSource, Compound, Flow, Host, HostTransaction, Identifier,
+    InteractionResult, ItemKey, ItemPlace, ItemResource, ItemStack, LevelRef, ModBlockEntityView,
+    ModContainer, Registrar, RunModCommandEvent, ServerHost, Tag, Text, UseItemOnEvent,
+    UseWithoutItemEvent,
 };
 
-use crate::runtime::{self, Brazier, Ingredient, Oven, Step, heat_sample_due};
+use crate::runtime::{
+    self, Brazier, Ingredient, LEVEL_ADMINS, Oven, Step, heat_sample_due, may_inspect,
+};
 
 /// The two blocks (upstream `BlockRegistry`).
 pub const OVEN: &str = "theurgy:calcination_oven";
@@ -67,8 +70,9 @@ pub fn declare(r: &mut dyn Registrar) {
         .block_entity_type(BRAZIER_TYPE)
         .blocks(&["pyromantic_brazier"])
         .build();
-    r.block_part(oven, crate::Oven);
-    r.block_part(brazier, crate::Brazier);
+    // A block-entity Part is also the block's Part (the same type answers both),
+    // so it is attached once, to the type; attaching it with `block_part` too
+    // is refused as "attached twice" at this pin.
     // Each type was declared on the lines above; a refusal is a programming error.
     r.block_entity_part(&oven_type, crate::Oven)
         .expect("the oven's Part attaches to the type this mod just declared");
@@ -331,6 +335,15 @@ pub fn brazier_use_item_on(
     if burn_time(&*host, held) == 0 {
         return None;
     }
+    // Only the same fuel merges: a different item already in the slot is not
+    // converted into the held one, and different components are not equal
+    // either (the review finding). The click then does nothing.
+    if let Some(stored) = stored.as_ref()
+        && (!runtime::fuel_merges(&stored.item().id(&*host), &held.item().id(&*host))
+            || !stored.same_components(held))
+    {
+        return None;
+    }
     let filling = stored.as_ref().map_or(0, ItemStack::count);
     let room = runtime::SLOT_LIMIT.saturating_sub(filling);
     let want = held.count().min(room);
@@ -349,7 +362,11 @@ pub fn brazier_use_item_on(
         }
         let entity = host.block_entity(level, pos).ok_or(())?;
         let total = filling.saturating_add(moved);
-        let placed = ItemStack::new(held.item(), total).ok_or(())?;
+        // Start from the stored stack (its components included) when merging,
+        // else from the held one; never rebuild the stack from the held item id
+        // and the old count (that was the conversion bug).
+        let mut placed = stored.clone().unwrap_or_else(|| held.clone());
+        placed.set_count(total).map_err(|_| ())?;
         entity
             .set_item_slot(host, tx, 0, Some(placed))
             .map_err(|_| ())?;
@@ -390,6 +407,20 @@ pub fn run_command(host: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>
                 .dimension
                 .id(&*host)
                 .and_then(|id| host.level(&id));
+            // The readout names the apparatus's slots and counts: gate it like a
+            // reach, so another player's apparatus is not read from afar.
+            if let Some(level) = level
+                && !may_read(&*host, event.source, level, pos)
+            {
+                feedback(
+                    host,
+                    format!(
+                        "You must be an operator or within {:.0} blocks of the apparatus.",
+                        runtime::INSPECT_RANGE
+                    ),
+                );
+                return Flow::Cancel;
+            }
             let line = match level {
                 Some(level) => readout(host, level, pos),
                 None => format!("{pos:?} is not a mod block entity."),
@@ -437,6 +468,34 @@ pub fn run_command(host: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>
             feedback(host, "usage: /theurgy info|recipe|recipes ...");
             Flow::Cancel
         }
+    }
+}
+
+/// Whether this command source may read the apparatus at `pos`: an operator,
+/// or a player in the same level within [`runtime::INSPECT_RANGE`] of the block.
+fn may_read(host: &dyn ServerHost, source: &CommandSource, level: LevelRef, pos: [i32; 3]) -> bool {
+    let op = source.permission().level() >= LEVEL_ADMINS;
+    match source {
+        CommandSource::Player { player, .. } => {
+            let same_level = player.level(host) == Some(level);
+            let distance = player
+                .entity()
+                .position(host)
+                .map(|at| {
+                    let block = [
+                        f64::from(pos[0]) + 0.5,
+                        f64::from(pos[1]) + 0.5,
+                        f64::from(pos[2]) + 0.5,
+                    ];
+                    (0..3)
+                        .map(|axis| (at[axis] - block[axis]).powi(2))
+                        .sum::<f64>()
+                        .sqrt()
+                })
+                .unwrap_or(f64::MAX);
+            may_inspect(op, same_level, distance)
+        }
+        _ => op,
     }
 }
 

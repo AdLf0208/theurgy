@@ -5,7 +5,7 @@ from the ATM10 jar (`ports/_shared/licence-cache/theurgy-1.21.1-neoforge-1.78.0.
 SHA-256 `2165c808…2bc7dd`). `python3 tools/assemble_content.py --check` fails if
 any of the 51 files drifts from the jar.
 
-## Carried byte for byte (upstream's own assets, CC-BY-4.0)
+## Carried byte for byte (upstream's own assets, CC-BY-SA-4.0)
 
 | File(s) | What |
 |---|---|

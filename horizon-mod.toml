@@ -5,14 +5,19 @@
 # recipes, a heat sample every 20 ticks, a 100-tick craft, and an empty hand that takes the
 # result. Two block entities with item slots, one container each, and three readout commands.
 #
-# Ported from Theurgy 1.78.0 (klikli-dev/theurgy, MIT AND CC-BY-4.0; the jar declares both).
+# Ported from Theurgy 1.78.0 (klikli-dev/theurgy): the code is MIT, the carried assets are
+# CC-BY-SA-4.0. The jar's `mods.toml` and upstream's `REUSE.toml` carry the label CC-BY-4.0,
+# but the licence text shipped at the tag (`LICENSES/CC-BY-4.0.txt`, the Attribution-ShareAlike
+# 4.0 International legal code) and upstream's own README at that tag both say CC-BY-SA-4.0 —
+# the text governs, and LICENSE-NOTICE.md records why (var/licence-theurgy.md has the evidence).
 # Local-only until the maintainer approves publishing (ARCHITECTURE.md §8).
 id = "theurgy"
 name = "Theurgy"
-# The port's own version, not the original mod's 1.78.0: the retired `.hnmod` bundle was 0.1.0
-# and a resubmission is always a new version. This is the first publication.
-version = "0.2.0"
-description = """The calcination half of Theurgy: a pyromantic brazier that burns furnace fuel and a calcination oven above it that turns 86 carried ingredients — ores, gems, ingots, plants, creature remains, stone and ice — into alchemical salts while the brazier below is lit. A coal heats sixteen crafts; a stick heats one. The other nine processes, the fluid apparatus, the divination rods and the GeckoLib renderers are not ported yet."""
+# The port's own version, not the original mod's 1.78.0: a resubmission is always a new version.
+# 0.2.2 aligns the package with the asset licence the carried release actually ships.
+version = "0.2.3"
+description = """The calcination half of Theurgy: a pyromantic brazier that burns furnace fuel and a calcination oven above it that turns 86 carried ingredients — ores, gems, ingots, plants, creature remains, stone and ice — into alchemical salts while the brazier below is lit. A coal heats sixteen crafts; a stick heats one. A different fuel already in the brazier is never
+converted into the held one, and `/theurgy info` needs an operator or a player within 8 blocks. The other nine processes, the fluid apparatus, the divination rods and the GeckoLib renderers are not ported yet."""
 authors = ["klikli-dev (upstream)", "Horizon native mod contributors"]
 # A native mod: Rust in src/, compiled by the launcher against the game build [native] pins,
 # beside data/ and assets/. The id is the resource namespace and the only identity.
@@ -27,5 +32,5 @@ capabilities = ["registries"]
 
 [native]
 game = "26.3"
-horizon = "0b14f8acfd97fa2c750e42795249dcc981178ca4"
+horizon = "0a875da91dbb0fdcb7ba8c42c11341aa229af51a"
 mixins = "e59da9094f0c2fdda6c627fe9eff22dec6a906f0"

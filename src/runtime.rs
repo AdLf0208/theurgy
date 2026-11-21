@@ -305,6 +305,26 @@ pub static RECIPES: &[Recipe] = &[
 ];
 // END GENERATED CALCINATION RECIPES
 
+/// Whether two stacks in the brazier's one slot are the same fuel, so an insert
+/// may merge them. A different fuel is never converted into the held one (the
+/// review finding); the glue also compares their components.
+#[must_use]
+pub fn fuel_merges(stored: &str, held: &str) -> bool {
+    stored == held
+}
+
+/// How far a player without operator permission may be from an apparatus to read it.
+pub const INSPECT_RANGE: f64 = 8.0;
+
+/// `Commands.LEVEL_ADMINS`: the permission level that bypasses the reach check.
+pub const LEVEL_ADMINS: u8 = 2;
+
+/// Whether a caller may read an apparatus's contents: an operator, or a player
+/// in the same level within [`INSPECT_RANGE`] of the block.
+pub fn may_inspect(op: bool, same_level: bool, distance: f64) -> bool {
+    op || (same_level && distance <= INSPECT_RANGE)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,5 +671,22 @@ mod tests {
             (0, 3),
             "three blackstone became three strata salts"
         );
+    }
+
+    #[test]
+    fn only_the_same_fuel_merges_in_the_brazier() {
+        assert!(fuel_merges("minecraft:coal", "minecraft:coal"));
+        assert!(
+            !fuel_merges("minecraft:coal", "minecraft:charcoal"),
+            "a different fuel is not converted into the held one"
+        );
+    }
+
+    #[test]
+    fn a_readout_needs_an_operator_reach_or_the_same_level() {
+        assert!(may_inspect(true, false, f64::MAX), "an operator");
+        assert!(may_inspect(false, true, 3.0), "a player in reach");
+        assert!(!may_inspect(false, true, 8.5), "out of reach");
+        assert!(!may_inspect(false, false, 1.0), "another level");
     }
 }

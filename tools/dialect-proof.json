@@ -1,0 +1,14 @@
+{
+  "recipe": {
+    "file": "data/theurgy/recipe/calcination_oven.json",
+    "tag_items": {
+      "#c:storage_blocks/copper": "minecraft:copper_block",
+      "#c:ingots/iron": "minecraft:iron_ingot"
+    },
+    "expect": {
+      "id": "theurgy:calcination_oven",
+      "count": 1
+    },
+    "consume": "minecraft:copper_block"
+  }
+}
