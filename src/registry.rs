@@ -432,7 +432,9 @@ pub fn register(r: &mut dyn Registrar) {
     let _ = r.fluid_key(fluids::SAL_AMMONIAC);
 
     for recipe_type in recipes::RECIPE_TYPES {
-        r.register_recipe_type(recipe_type);
+        let full = format!("theurgy:{recipe_type}");
+        r.register_recipe_type(&full);
+        r.register_raw_recipe_serializer(&full, &full);
     }
 
     // Data-driven sal ammoniac ore generation (replaces legacy chunk_load hook).

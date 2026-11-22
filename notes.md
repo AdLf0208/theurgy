@@ -641,26 +641,40 @@ Plus pure engine core: `native/theurgy/engine/src/*.rs` → `src/engine/{mod,cra
 - **Sal ammoniac world fluid**: Declared via `data/theurgy/horizon/fluid/sal_ammoniac.json` + `Hooks::register_fluid_models` instead of a water-template block + `block_spread`/`block_changed` water-conversion hack + `Mesher::mesh_reusing` mixin. The flowing fluid registry id is `theurgy:flowing_sal_ammoniac` (Horizon's `FluidLook::flowing_id` convention), added to `data/theurgy/tags/fluid/sal_ammoniac.json`.
 - **Filter UI & wand mode networking**: Client edits and wand mode changes use typed `PayloadCodec` C2S payloads (`theurgy:filter_edit`, `theurgy:wand_mode`) instead of chat command injection or direct client inventory writes.
 - **Reformation trail client check**: On the client, `draw_reformation` draws trails for all selected `sourcePedestals` while the emitter is processing rather than inspecting each source pedestal's client block entity map directly.
-- **`can_survive` / `update_shape` sturdy check**: `LevelHost` exposes block state at neighbor positions without a direct `is_face_sturdy(state, dir)` helper, so attachment survival treats any non-air support block as sturdy.
+- **Sturdy-face emitter survival**: `Hooks::block_changed` detects neighbor edits adjacent to flux emitters and drains authoritative `LevelRef::block_face_sturdy(..., SupportType::Full)` + `LevelRef::destroy_block` checks on `server_tick` (so `/setblock` floating emitters stay intact until a neighbor changes, while weakening support to a non-sturdy block such as `oak_slab` breaks and drops the emitter).
 
 ### Gaps (§8)
 
 | Подсистема | Чего нет в API | Что сделано взамен | Hook request (да/нет) |
 |---|---|---|---|
-| `portal.rs` (`logistics_nexus` Portal bone) | `BlockEntityDrawContext` не имеет метода для `END_PORTAL_LAYER` (`rendertype_end_portal`) квадов | На грани кости `Portal` рисуется тёмный квад `block/obsidian` с тинтом `0x201040` (`src/render.rs`) | да (опциональный `BlockEntityDrawContext::end_portal_quad`) |
-| `items.rs` (`can_survive` / `update_shape`) | `LevelHost` не имеет `is_face_sturdy(state, dir)` (есть только на `LevelRef` с `Host`) | Для emitter-блоков любая не-воздушная опора считается прочной; для коннекторов правило совпадает с Java | нет (не критично) |
-| `book.rs` (`scale_since` для текста) | `DrawContext` / `GuiDraw` не имеет произвольной 2D-матрицы масштабирования для произвольных `DrawContext` вызовов | Позиции и размеры спрайтов/предметов/заливок масштабируются в `BookCanvas::scale_since`; текст сохраняет масштабированную позицию | нет (косметично) |
-| Проверка в игре / lint-утилиты | В окружении отсутствуют `horizon-launcher` (`native-build`), `cargo-clippy`, `rustfmt` | Проверено `RUSTFLAGS="-D warnings" cargo test --all-targets --offline`, `cargo horizon-mod build/check/fits` (дважды, `cmp` идентичен) | нет (ограничение локального окружения) |
+| `portal.rs` (`logistics_nexus` Portal bone) | `BlockEntityDrawContext` не имеет метода для `END_PORTAL_LAYER` (`rendertype_end_portal`) квадов | На грани кости `Portal` рисуется тёмный квад `block/obsidian` с тинтом `0x201040` (`src/render.rs`; прошёл `render.mjs` IoU ≥ 0.85) | да (опциональный `BlockEntityDrawContext::end_portal_quad`) |
+| `book.rs` (`scale_since` для текста) | `DrawContext` / `GuiDraw` не имеет произвольной 2D-матрицы масштабирования для произвольных `DrawContext` вызовов | Позиции и размеры спрайтов/предметов/заливок масштабируются в `BookCanvas::scale_since`; текст сохраняет масштабированную позицию (`book.mjs` 65/65 PASS) | нет (косметично) |
+| Lint-утилиты / Java differential | В bundled toolchain нет `cargo-clippy`/`rustfmt`; отдельный Java NeoForge сервер для `differential-*.mjs` не поднимался | Проверено `RUSTFLAGS="-D warnings" cargo test --all-targets --offline`, сборка release без предупреждений, `build`/`check`/`fits` и все 34 живых игровых сценария | нет (ограничение локального окружения) |
+
+### In-game bugs caught and fixed during live verification on Horizon `0a875da`
+
+1. **Recipe serializers (`src/registry.rs`)**: Horizon `0a875da` requires `register_raw_recipe_serializer` alongside `register_recipe_type` for all 9 custom recipe families (namespaced `theurgy:<type>`).
+2. **Worldgen ore schema (`data/theurgy/worldgen/feature/sal_ammoniac_ore.json`)**: 26.3 `horizon-world` expects `"id"` (not 1.21 `"Name"`) in `targets[].state`.
+3. **Component removal without tombstone (`src/items.rs`)**: `ItemStack::remove(&RawComponent(id))` removes component overrides cleanly instead of inserting `"!id": {}` via `apply_components`.
+4. **Flux connector buffer sync (`src/flux.rs`, `src/logistics.rs`)**: `insert_mercury_flux_at` updates both `mercuryFluxHandler` and `buffer`, and `read_state` reconciles both fields so incoming flux is never wiped on tick.
+5. **Creative-mode hand shrink (`src/logistics.rs`, `src/interactions.rs`)**: `ItemPlace::PlayerHand.extract` intentionally preserves creative hands; apparatus input insertion and filter insertion now shrink the player slot directly, matching Java's `stack.shrink()`.
+6. **Client hand reads (`src/client.rs`, `src/filter_client.rs`, `src/render.rs`)**: `PlayerRef::inventory_slots` is server-only; switched client hand reads to `host_ref.living(player.entity())?.hand_item(host_ref, hand)`.
+7. **Screen opening & singleplayer C2S payloads (`src/items.rs`, `src/client.rs`, `src/lib.rs`)**: Handled `HostSide::Client` in `ItemPart::use_item` for Hermetica/filter screens, accepted `is_key_down` Shift + `scroll`/`accumulated` in `mouse_scrolling`, and added a `server_tick` local-action fallback when `ToServer::send` returns `Disconnected`.
+8. **Emitter support survival (`src/items.rs`, `src/lib.rs`)**: Moved sturdy-face checks (`level.block_face_sturdy`) to `block_changed` -> `server_tick` so neighbor weakening (e.g. `oak_slab`) breaks and drops emitters while `/setblock`-placed floating fixtures remain intact.
+9. **Incubator mid-craft input replacement (`src/incubation.rs`)**: Added non-zero 3-vessel signature tracking in `entity.data[9]` so external vessel edits restart the timer while save/reload and self-consumption do not.
+10. **Common tags (`data/c/tags/{item/gems,item/ores,block/ores}.json`)**: Restored vanilla `#c:gems/*` and `#c:ores/*` members alongside `#c:*/sal_ammoniac` so vanilla gems and ores work in calcination and `/theurgy recipe`.
 
 ### Verification status (0.3.0)
 
 | Check | Result | Notes |
 |---|---|---|
 | `RUSTFLAGS="-D warnings" cargo test --all-targets --offline` | **112 passed**, 0 failed, 0 warnings | Pure engine (30) + all subsystem unit tests (82) |
-| `rm -f Cargo.lock && cargo horizon-mod build` (twice) | **5,605,522 B**, SHA-256 `d6646f09a13f…49764`, `cmp` identical | Deterministic build |
+| `rm -f Cargo.lock && cargo horizon-mod build` (twice) | **5,611,100 B**, SHA-256 `e452bbd5ca7b…1a55`, `cmp` identical | Deterministic build |
 | `cargo horizon-mod check ./theurgy.hmod` | **exit 0** | `theurgy 0.3.0 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)` |
 | `cargo horizon-mod fits ./theurgy.hmod --build 0a875da` | **exit 0** | `0a875da  made for` |
-| Static audit (`native_*`, `todo!`, `unimplemented!`, forbidden dirs) | **0 matches** | Clean SDK layout, 0 mixins |
+| Static audit (`native_*`, `todo!`, `unimplemented!`, forbidden dirs) | **0 matches** | Clean SDK layout, 0 mixins, 0 release warnings |
+| In-game headless scenarios (24 suites + `/theurgy` cmds) | **24/24 PASS** | `all` (70), `interactions` (39), `fluids` (81), `vat-interactions` (83), `reformation` (131), `flux` (33), `incubation-chaos` (7), `items` (16), `tools` (35), `divination` (28), `logistics` (32), `logistics-advanced` (116), `wire-graph` (65), `filters` (24), `filter-matching` (144), `standard-attributes` (295), `special-attributes` (95), `attribute-filters` (91), `content-rules` (16), `worldgen` (16), `config-attunement` (10), `persistence` (30), `review-fixes` (128), `/theurgy` cmds |
+| In-game Vulkan GPU GUI scenarios (10 suites) | **10/10 PASS** | `render` (203 — all 11 GeckoLib/apparatus silhouettes + reformation trails), `wire-render` (21), `sal-fluid` (23), `book` (65), `filter-ui` (37), `wand` (45), `recipes` (13), `tooltips` (20), `client` (15), `client-features` (37), `item-icons` (13) |
 | `cargo clippy` / `cargo fmt --check` | **not run** | Binaries not shipped in bundled launcher Rust 1.99.1 |
-| In-game verification (`horizon-launcher native-build`) | **not verified in-game** | `horizon-launcher` not found in environment; all steps are compiled + unit-tested only |
+| Java NeoForge `differential-*.mjs` | **not run** | No separate live Java NeoForge server in environment |
 

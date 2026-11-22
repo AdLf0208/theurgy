@@ -56,6 +56,64 @@ static WAND_TO_SERVER: OnceLock<ToServer<WandModePayload>> = OnceLock::new();
 static FILTER_TO_SERVER: OnceLock<ToServer<FilterEditPayload>> = OnceLock::new();
 
 static BOOK_PROGRESS: Mutex<BTreeMap<u128, Vec<u8>>> = Mutex::new(BTreeMap::new());
+static LOCAL_PLAYER_ID: Mutex<Option<u128>> = Mutex::new(None);
+
+enum LocalAction {
+    BookSave(Vec<u8>),
+    WandMode(i32),
+    FilterEdit {
+        hand: Hand,
+        action: String,
+        args: String,
+    },
+}
+
+static PENDING_LOCAL_ACTIONS: Mutex<Vec<LocalAction>> = Mutex::new(Vec::new());
+
+fn queue_local_action(action: LocalAction) {
+    if let Ok(mut pending) = PENDING_LOCAL_ACTIONS.lock() {
+        pending.push(action);
+    }
+}
+
+/// Drain singleplayer client->integrated-server actions queued when no remote
+/// payload session exists (`PayloadSendError::Disconnected`).
+pub fn drain_local_actions(host_ref: &mut dyn ServerHost) {
+    let actions: Vec<LocalAction> = PENDING_LOCAL_ACTIONS
+        .lock()
+        .ok()
+        .map(|mut pending| std::mem::take(&mut *pending))
+        .unwrap_or_default();
+    if actions.is_empty() {
+        return;
+    }
+    let player_id = host_ref
+        .players()
+        .acting_player()
+        .and_then(|p| p.entity().uuid(host_ref))
+        .or_else(|| LOCAL_PLAYER_ID.lock().ok().and_then(|g| *g));
+    let Some(player_id) = player_id else {
+        return;
+    };
+    for action in actions {
+        match action {
+            LocalAction::BookSave(bytes) => {
+                if serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(&bytes)
+                    .is_ok()
+                    && let Ok(mut all) = BOOK_PROGRESS.lock()
+                {
+                    all.insert(player_id, bytes);
+                }
+            }
+            LocalAction::WandMode(delta) => {
+                items::change_wand_mode(host_ref, player_id, delta.clamp(-1, 1));
+            }
+            LocalAction::FilterEdit { hand, action, args } => {
+                let _ = filter::apply_action(host_ref, player_id, hand, &action, &args);
+            }
+        }
+    }
+}
 
 struct BookSaveWork(Vec<u8>);
 impl PayloadWork for BookSaveWork {
@@ -207,6 +265,9 @@ pub fn book_save(player: u128, directory: &Path) {
 }
 
 pub fn book_logged_in(host_ref: &mut dyn ServerHost, player_id: u128) {
+    if let Ok(mut local) = LOCAL_PLAYER_ID.lock() {
+        *local = Some(player_id);
+    }
     let bytes = BOOK_PROGRESS
         .lock()
         .ok()
@@ -214,9 +275,16 @@ pub fn book_logged_in(host_ref: &mut dyn ServerHost, player_id: u128) {
         .unwrap_or_else(|| b"{}".to_vec());
     if let Some(token) = BOOK_TO_CLIENT.get()
         && let Some(player) = host_ref.player(player_id)
-        && let Ok(json) = String::from_utf8(bytes)
+        && let Ok(json) = String::from_utf8(bytes.clone())
     {
-        let _ = token.send(host_ref, player, &BookProgressPayload { json });
+        if token
+            .send(host_ref, player, &BookProgressPayload { json })
+            .is_err()
+        {
+            book::set_progress(&bytes);
+        }
+    } else {
+        book::set_progress(&bytes);
     }
 }
 
@@ -448,6 +516,12 @@ pub fn open_book(host_ref: &mut dyn ClientHost) -> bool {
     true
 }
 
+pub fn open_filter(host_ref: &mut dyn ClientHost, stack: &ItemStack, hand: Hand) -> bool {
+    book::close();
+    recipe_client::close();
+    filter_client::open(host_ref, stack, hand)
+}
+
 // ---------------------------------------------------------------------------
 // Screen & tick dispatch
 // ---------------------------------------------------------------------------
@@ -476,21 +550,34 @@ pub fn client_tick_post(host_ref: &mut dyn ClientHost) {
         let _ = host_ref.play_local_sound(&SoundPlay::ui("minecraft:item.book.page_turn"), 0);
     }
     if let Some(bytes) = book::take_progress()
-        && let Some(token) = BOOK_TO_SERVER.get()
-        && let Ok(json) = String::from_utf8(bytes)
+        && let Ok(json) = String::from_utf8(bytes.clone())
     {
-        let _ = token.send(host_ref, &BookProgressPayload { json });
+        let sent = BOOK_TO_SERVER
+            .get()
+            .is_some_and(|token| token.send(host_ref, &BookProgressPayload { json }).is_ok());
+        if !sent {
+            queue_local_action(LocalAction::BookSave(bytes));
+        }
     }
     for edit in filter_client::take_actions() {
-        if let Some(token) = FILTER_TO_SERVER.get() {
-            let _ = token.send(
-                host_ref,
-                &FilterEditPayload {
-                    off_hand: edit.hand == Hand::Off,
-                    action: edit.action,
-                    args: edit.args,
-                },
-            );
+        let sent = FILTER_TO_SERVER.get().is_some_and(|token| {
+            token
+                .send(
+                    host_ref,
+                    &FilterEditPayload {
+                        off_hand: edit.hand == Hand::Off,
+                        action: edit.action.clone(),
+                        args: edit.args.clone(),
+                    },
+                )
+                .is_ok()
+        });
+        if !sent {
+            queue_local_action(LocalAction::FilterEdit {
+                hand: edit.hand,
+                action: edit.action,
+                args: edit.args,
+            });
         }
     }
     filter_client::tick_refresh(host_ref);
@@ -592,11 +679,7 @@ pub fn screen_char_typed(
 
 fn local_hand_stack(host_ref: &dyn ClientHost, hand: Hand) -> Option<ItemStack> {
     let player = host_ref.local_player()?;
-    let slot = match hand {
-        Hand::Main => player.selected_slot(host_ref).unwrap_or(0) as u32,
-        Hand::Off => 40,
-    };
-    player.inventory_slots(host_ref)?.into_iter().find_map(|(s, st)| (s == slot).then_some(st))
+    host_ref.living(player.entity())?.hand_item(host_ref, hand)
 }
 
 pub fn interaction_key(
@@ -631,10 +714,13 @@ pub fn input_key(host_ref: &mut dyn ClientHost, event: &mut InputKeyEvent<'_>) {
     if event.action != KeyAction::Press || !host_ref.playing() {
         return;
     }
-    if host_ref.consume_click("theurgy", "change_item_mode")
-        && let Some(token) = WAND_TO_SERVER.get()
-    {
-        let _ = token.send(host_ref, &WandModePayload { delta: VarInt(1) });
+    if host_ref.consume_click("theurgy", "change_item_mode") {
+        let sent = WAND_TO_SERVER
+            .get()
+            .is_some_and(|token| token.send(host_ref, &WandModePayload { delta: VarInt(1) }).is_ok());
+        if !sent {
+            queue_local_action(LocalAction::WandMode(1));
+        }
     }
     if host_ref.consume_click("theurgy", "open_recipes") {
         book::close();
@@ -647,7 +733,19 @@ pub fn mouse_scrolling(
     host_ref: &mut dyn ClientHost,
     event: &mut MouseScrollingEvent,
 ) -> Flow {
-    if event.cancelled || !host_ref.modifiers().shift() || event.accumulated[1] == 0 {
+    let shift = host_ref.modifiers().shift()
+        || host_ref.is_key_down("key.keyboard.left.shift")
+        || host_ref.is_key_down("key.keyboard.right.shift");
+    let delta = if event.accumulated[1] != 0 {
+        event.accumulated[1].signum()
+    } else if event.scroll[1] > 0.0 {
+        1
+    } else if event.scroll[1] < 0.0 {
+        -1
+    } else {
+        0
+    };
+    if event.cancelled || !shift || delta == 0 {
         return Flow::Continue;
     }
     let Some(stack) = local_hand_stack(host_ref, Hand::Main) else {
@@ -656,9 +754,11 @@ pub fn mouse_scrolling(
     if stack.item().id(host_ref) != items::MERCURIAL_WAND {
         return Flow::Continue;
     }
-    let delta = if event.accumulated[1] > 0 { 1 } else { -1 };
-    if let Some(token) = WAND_TO_SERVER.get() {
-        let _ = token.send(host_ref, &WandModePayload { delta: VarInt(delta) });
+    let sent = WAND_TO_SERVER
+        .get()
+        .is_some_and(|token| token.send(host_ref, &WandModePayload { delta: VarInt(delta) }).is_ok());
+    if !sent {
+        queue_local_action(LocalAction::WandMode(delta));
     }
     event.cancelled = true;
     Flow::Cancel

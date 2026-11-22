@@ -520,16 +520,9 @@ pub fn tick_refresh(host_ref: &dyn ClientHost) {
     let Some(player) = host_ref.local_player() else {
         return;
     };
-    let slot_idx = match hand {
-        Hand::Main => player.selected_slot(host_ref).unwrap_or(0) as u32,
-        Hand::Off => 40,
-    };
-    let held = player.inventory_slots(host_ref).and_then(|slots| {
-        slots
-            .into_iter()
-            .find(|(s, _)| *s == slot_idx)
-            .map(|(_, st)| st)
-    });
+    let held = host_ref
+        .living(player.entity())
+        .and_then(|living| living.hand_item(host_ref, hand));
     let updated = held.and_then(|stack| load(host_ref, &stack, hand, page));
     if let Ok(mut slot) = FILTER_UI.lock() {
         *slot = updated;

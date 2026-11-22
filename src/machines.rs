@@ -13,7 +13,9 @@ use mod_api::{
 };
 
 use crate::engine::machines::{CraftPlan, MachineLayout, ProcessResult, commit_plan, layout};
-use crate::engine::recipes::{Item, Recipe, Tank, fluid_part, ingredient_parts};
+use crate::engine::recipes::{Item, Tank};
+#[cfg(test)]
+use crate::engine::recipes::{Recipe, fluid_part, ingredient_parts};
 use crate::{heat, host, recipes, registry};
 
 /// Machine kinds shared with `engine::machines::layout`.
@@ -26,6 +28,7 @@ const MACHINE_KINDS: [(&str, &str); 5] = [
 ];
 
 const MACHINE_TANK_CAPACITY: i32 = 10_000;
+#[cfg(test)]
 const FALLBACK_MAX_STACK: u32 = 64;
 
 /// Cached vat output signal state so `block_signal` and `analog_output` answer
@@ -249,6 +252,7 @@ fn write_tank(nbt: &mut Compound, index: usize, tank: &Tank) {
     nbt.insert("fluids".into(), Tag::List(list));
 }
 
+#[cfg(test)]
 fn plan_for(
     kind: &str,
     recipe: &Recipe,
@@ -327,6 +331,7 @@ fn plan_for(
     })
 }
 
+#[cfg(test)]
 fn recipe_time(json: &Value) -> i32 {
     json.get("time")
         .and_then(Value::as_i64)

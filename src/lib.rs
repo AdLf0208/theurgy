@@ -27,15 +27,15 @@ pub mod render;
 pub mod selection;
 
 use mod_api::{
-    self, ClientHost, ClientTickPostEvent, ComponentTypesEvent, EntityPlaceEvent, Flow,
-    GuiLayerDrawEvent, Hooks, HostSide, InputKeyEvent, InteractionKeyMappingTriggeredEvent,
-    ItemStack, LeftClickBlockEvent, LivingEntityUseItemFinishEvent, MouseScrollingEvent,
+    self, BlockChangedEvent, ClientHost, ClientTickPostEvent, ComponentTypesEvent, EntityPlaceEvent,
+    Flow, GuiLayerDrawEvent, Hooks, HostSide, InputKeyEvent, InteractionKeyMappingTriggeredEvent,
+    ItemStack, LeftClickBlockEvent, LevelHost, LivingEntityUseItemFinishEvent, MouseScrollingEvent,
     PlayerLoadFromFileEvent, PlayerLoggedInEvent, PlayerSaveToFileEvent, PrepareItemCraftEvent,
     RegisterCommandsEvent, RegisterFluidModelsEvent, RegisterGuiLayersEvent, Registrar,
     RegistrationContext, RightClickBlockEvent, RunModCommandEvent, ScreenCharTypedPreEvent,
     ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseDraggedPreEvent,
     ScreenMouseScrolledPreEvent, ScreenRenderPostEvent, ServerAboutToStartEvent, ServerHost,
-    ServerStoppedEvent, StandaloneModelsEvent, TagsUpdatedEvent,
+    ServerStoppedEvent, ServerTickEvent, StandaloneModelsEvent, TagsUpdatedEvent,
 };
 
 #[derive(Default)]
@@ -82,6 +82,15 @@ impl Hooks for Mod {
         if let HostSide::Server(host) = host {
             recipes::publish(host);
         }
+    }
+
+    fn server_tick(&self, host: &mut dyn ServerHost, _: &mut ServerTickEvent) {
+        client::drain_local_actions(host);
+        items::drain_support_checks(host);
+    }
+
+    fn block_changed(&self, level: &dyn LevelHost, event: &mut BlockChangedEvent) {
+        items::on_neighbor_block_changed(level, event);
     }
 
     fn server_stopped(&self, _: &mut dyn ServerHost, _: &mut ServerStoppedEvent) {

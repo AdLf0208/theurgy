@@ -5,7 +5,7 @@
   "targets": [
     {
       "state": {
-        "Name": "theurgy:sal_ammoniac_ore"
+        "id": "theurgy:sal_ammoniac_ore"
       },
       "target": {
         "predicate_type": "minecraft:tag_match",
@@ -14,7 +14,7 @@
     },
     {
       "state": {
-        "Name": "theurgy:deepslate_sal_ammoniac_ore"
+        "id": "theurgy:deepslate_sal_ammoniac_ore"
       },
       "target": {
         "predicate_type": "minecraft:tag_match",

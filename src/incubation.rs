@@ -285,6 +285,29 @@ fn perform_craft(
     true
 }
 
+/// Compact non-zero hash of the three vessel stacks `(item_id, count)` stored in
+/// `entity.data[9]` so external vessel edits (including `/data merge` or player
+/// swaps) trigger `input_changed` just like Java's `onContentsChanged`, while
+/// `0` means uninitialized after chunk/world load (never resets saved progress).
+fn vessel_signature(
+    host_ref: &dyn Host,
+    m: &ItemStack,
+    sa: &ItemStack,
+    su: &ItemStack,
+) -> i32 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for stack in [m, sa, su] {
+        for b in stack.item().id(host_ref).as_bytes() {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        h ^= u64::from(stack.count());
+        h = h.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    let folded = (h ^ (h >> 32)) as i32;
+    if folded == 0 { 1 } else { folded }
+}
+
 fn tick_incubator(
     host_ref: &mut dyn ServerHost,
     pos: [i32; 3],
@@ -372,12 +395,15 @@ fn tick_incubator(
     });
 
     let time = shape.time.max(0);
-    if state.total_time != time {
+    let sig = vessel_signature(&*host_ref, m_stack, sa_stack, su_stack);
+    let prev_sig = entity.data.get(9).copied().unwrap_or(0);
+    if state.total_time != time || (prev_sig != 0 && prev_sig != sig) {
         state.input_changed(time);
     }
     let effects = state.tick(is_heated, true, can_craft, time);
 
     let mut crafted = false;
+    let mut post_sig = sig;
     if effects.craft_attempt
         && let Some(out) = result
         && perform_craft(host_ref, level, [mercury, salt, sulfur], entity, &out)
@@ -385,9 +411,21 @@ fn tick_incubator(
         crafted = true;
         state.progress = 0;
         state.total_time = total_time_or_default(&state);
+        post_sig = match (
+            vessel_input(&*host_ref, level, mercury),
+            vessel_input(&*host_ref, level, salt),
+            vessel_input(&*host_ref, level, sulfur),
+        ) {
+            (Some(nm), Some(nsa), Some(nsu)) => vessel_signature(&*host_ref, &nm, &nsa, &nsu),
+            _ => 0,
+        };
     }
     let fields = &mut **entity;
     host::save_crafting(&mut fields.nbt, &mut fields.data, &state);
+    if fields.data.len() <= 9 {
+        fields.data.resize(10, 0);
+    }
+    fields.data[9] = post_sig;
     if effects.block_updates > 0 || crafted {
         host_ref.block_entity_sync(pos);
     }

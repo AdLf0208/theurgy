@@ -10,6 +10,7 @@ pub const BRAZIER: &str = "theurgy:pyromantic_brazier";
 const HEAT_CHECK_INTERVAL: i64 = 20;
 const HEAT_TARGET_TICKS: i32 = 20 * 6;
 
+#[cfg(test)]
 fn key(pos: [i32; 3]) -> (i32, i32, i32) {
     (pos[0], pos[1], pos[2])
 }

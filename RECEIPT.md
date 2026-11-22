@@ -4,8 +4,8 @@
 |---|---|
 | version | `0.3.0` |
 | file | `theurgy.hmod` |
-| bytes | 5,605,522 |
-| sha256 | `d6646f09a13f670fade398cfe0c1dbc5d42d719ebf579e54bb29de83d7049764` |
+| bytes | 5,611,100 |
+| sha256 | `e452bbd5ca7bb16adf60a1de6a6701d3c1345759bf4fc901a72da3acca311a55` |
 | source | branch `full-port` — reproducible (`rm -f Cargo.lock && cargo horizon-mod build` twice, `cmp` identical) |
 | game | 26.3 |
 | horizon | `0a875da91dbb0fdcb7ba8c42c11341aa229af51a` |
@@ -16,4 +16,5 @@
 - `RUSTFLAGS="-D warnings" cargo test --all-targets --offline`: **112 passed**, 0 failed, 0 warnings.
 - `cargo horizon-mod check ./theurgy.hmod`: exit 0.
 - `cargo horizon-mod fits ./theurgy.hmod --build 0a875da`: `0a875da  made for`, exit 0.
-- **Not verified in-game yet**: `horizon-launcher` (`native-build`) is not present in this environment; `cargo clippy` and `cargo fmt` binaries are not bundled in the launcher Rust toolchain. See `notes.md`.
+- **In-game verification on Horizon `0a875da` (integrated server + Vulkan GPU GUI via `horizon-ctl`)**: **34/34 scenarios + `/theurgy` commands PASS** (`all`, `interactions`, `fluids`, `sal-fluid`, `vat-interactions`, `reformation`, `flux`, `incubation-chaos`, `items`, `tools`, `divination`, `wand`, `logistics`, `logistics-advanced`, `wire-graph`, `filters`, `filter-matching`, `filter-ui`, `standard-attributes`, `special-attributes`, `attribute-filters`, `content-rules`, `worldgen`, `config-attunement`, `persistence`, `review-fixes`, `recipes`, `tooltips`, `client`, `client-features`, `book`, `item-icons`, `wire-render`, `render`).
+- Not run: `cargo clippy` / `cargo fmt --check` (not bundled in the launcher Rust 1.99.1 toolchain) and Java-server `differential-*.mjs` suites (no live NeoForge Java server running). See `notes.md`.

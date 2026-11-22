@@ -1527,14 +1527,10 @@ fn draw_held_fit(
     let Some(player) = host_ref.local_player() else {
         return;
     };
-    let selected = player.selected_slot(host_ref).unwrap_or(0) as u32;
-    let held = player.inventory_slots(host_ref).and_then(|slots| {
-        slots
-            .into_iter()
-            .find(|(slot, _)| *slot == selected)
-            .map(|(_, stack)| stack)
-    });
-    let Some(stack) = held else {
+    let Some(stack) = host_ref
+        .living(player.entity())
+        .and_then(|living| living.hand_item(host_ref, mod_api::Hand::Main))
+    else {
         return;
     };
     let accepted = interactions::accepts_input(host_ref, block, &stack);

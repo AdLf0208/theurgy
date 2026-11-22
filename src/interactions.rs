@@ -11,8 +11,8 @@
 use std::sync::atomic::{AtomicI64, Ordering};
 
 use mod_api::{
-    BlockClick, Host, HostTransaction, InteractionResult, ItemPlace, ItemResource, ItemStack,
-    LevelRef, ServerHost, Text, UseItemOnEvent, UseWithoutItemEvent, fluid_util,
+    Hand, Host, HostTransaction, InteractionResult, ItemStack, LevelRef, ServerHost, Text,
+    UseItemOnEvent, UseWithoutItemEvent, fluid_util,
 };
 
 use crate::{host, machines, recipes, registry};
@@ -150,27 +150,48 @@ pub fn use_item_on(
 ) -> Option<InteractionResult> {
     let click = event.click;
     let level = host_ref.level(click.dimension.key().id())?;
-    let (entity_pos, block) = resolve_entity_pos(&*host_ref, level, click.pos)?;
+    interact_with_item(
+        host_ref,
+        level,
+        click.player,
+        click.hand,
+        click.pos,
+        click.hit.face,
+        click.stack,
+    )
+}
+
+/// Core item-on-apparatus interaction shared with `/theurgy_interact`.
+pub fn interact_with_item(
+    host_ref: &mut dyn ServerHost,
+    level: LevelRef,
+    player_id: u128,
+    hand: Hand,
+    pos: [i32; 3],
+    face: [i32; 3],
+    held_opt: Option<&ItemStack>,
+) -> Option<InteractionResult> {
+    let (entity_pos, block) = resolve_entity_pos(&*host_ref, level, pos)?;
 
     // Closed vats block all non-empty-hand clicks.
     let kind = interaction(&block);
     if kind == Some(Interaction::DynamicOutput) {
         let is_open = level.block_property(&*host_ref, entity_pos, "open").as_deref() != Some("false");
         if !is_open {
-            vat_message(host_ref, click.player, &block, "closed");
+            vat_message(host_ref, player_id, &block, "closed");
             return Some(InteractionResult::Success);
         }
     }
 
     // Try fluid tank interaction first (buckets / fluid containers).
     if has_fluid_tank(&block)
-        && let Some(player) = host_ref.player(click.player)
+        && let Some(player) = host_ref.player(player_id)
     {
-        let side = host::face_to_direction(click.hit.face);
+        let side = host::face_to_direction(face);
         if fluid_util::interact_with_fluid_handler(
             host_ref,
             player,
-            click.hand,
+            hand,
             level,
             entity_pos,
             side,
@@ -182,7 +203,7 @@ pub fn use_item_on(
     }
 
     let kind = kind?;
-    let held = click.stack.filter(|s| s.count() > 0)?;
+    let held = held_opt.filter(|s| s.count() > 0)?;
 
     if kind == Interaction::OneOutput || !accepts_input(&*host_ref, &block, held) {
         return None;
@@ -226,24 +247,32 @@ pub fn use_item_on(
             continue;
         }
 
-        let hand = ItemPlace::PlayerHand {
-            player: click.player,
-            hand: click.hand,
+        let Some(player) = host_ref.player(player_id) else {
+            return None;
         };
-        let resource = ItemResource::of(held);
+        let player_slot = match hand {
+            Hand::Main => player.selected_slot(&*host_ref).unwrap_or(0) as u32,
+            Hand::Off => 40,
+        };
+        let remainder = if held.count() > want {
+            let mut rem = held.clone();
+            let _ = rem.set_count(held.count() - want);
+            Some(rem)
+        } else {
+            None
+        };
         let placed = host_ref.transaction(|host_ref, tx| {
-            let moved = hand.extract(host_ref, tx, &resource, want);
-            if moved == 0 {
-                return Err(());
-            }
             let entity = host_ref.block_entity(level, entity_pos).ok_or(())?;
-            let total = filling.saturating_add(moved);
+            let total = filling.saturating_add(want);
             let mut next = stored.clone().unwrap_or_else(|| held.clone());
             next.set_count(total).map_err(|_| ())?;
             entity
                 .set_item_slot(host_ref, tx, index as u32, Some(next))
                 .map_err(|_| ())?;
-            Ok(())
+            player
+                .set_inventory_slot(host_ref, player_slot, remainder)
+                .map_err(|_| ())?;
+            Ok::<(), ()>(())
         });
         if placed.is_ok() {
             host_ref.block_entity_sync(entity_pos);
@@ -265,21 +294,31 @@ pub fn use_without_item(
         return None;
     }
     let level = host_ref.level(click.dimension.key().id())?;
-    let (entity_pos, block) = resolve_entity_pos(&*host_ref, level, click.pos)?;
+    interact_empty_hand(host_ref, level, click.player, click.pos)
+}
+
+/// Core empty-hand apparatus interaction shared with `/theurgy_interact`.
+pub fn interact_empty_hand(
+    host_ref: &mut dyn ServerHost,
+    level: LevelRef,
+    player_id: u128,
+    pos: [i32; 3],
+) -> Option<InteractionResult> {
+    let (entity_pos, block) = resolve_entity_pos(&*host_ref, level, pos)?;
     let kind = interaction(&block)?;
 
     if kind == Interaction::DynamicOutput {
         let is_open =
             level.block_property(&*host_ref, entity_pos, "open").as_deref() != Some("false");
         let sneaking = host_ref
-            .player(click.player)
+            .player(player_id)
             .is_some_and(|p| p.is_secondary_use_active(&*host_ref).unwrap_or(false));
         if sneaking {
             if is_open {
                 if machines::vat_can_craft(host_ref, level, entity_pos) {
                     host_ref.set_block_property_with(entity_pos, "open", "false", 2);
                 } else {
-                    vat_message(host_ref, click.player, &block, "no_recipe");
+                    vat_message(host_ref, player_id, &block, "no_recipe");
                 }
             } else {
                 host_ref.set_block_property_with(entity_pos, "open", "true", 2);
@@ -296,19 +335,19 @@ pub fn use_without_item(
             }
             return Some(InteractionResult::Success);
         } else if !is_open {
-            vat_message(host_ref, click.player, &block, "closed");
+            vat_message(host_ref, player_id, &block, "closed");
             return Some(InteractionResult::Success);
         }
     }
 
-    take_output_first(host_ref, level, entity_pos, click, kind)
+    take_output_first(host_ref, level, entity_pos, player_id, kind)
 }
 
 fn take_output_first(
     host_ref: &mut dyn ServerHost,
     level: LevelRef,
     entity_pos: [i32; 3],
-    click: &BlockClick<'_>,
+    player_id: u128,
     kind: Interaction,
 ) -> Option<InteractionResult> {
     if LAST_INSERT_TICK.load(Ordering::Relaxed) == level.game_time(&*host_ref).unwrap_or(0) {
@@ -329,7 +368,7 @@ fn take_output_first(
         }
         let taken = host_ref.transaction(|host_ref, tx| {
             let entity = host_ref.block_entity(level, entity_pos).ok_or(())?;
-            let player = host_ref.player(click.player).ok_or(())?;
+            let player = host_ref.player(player_id).ok_or(())?;
             player.give_stack(host_ref, stack.clone()).map_err(|_| ())?;
             entity
                 .set_item_slot(host_ref, tx, index as u32, None)

@@ -455,6 +455,9 @@ pub fn insert_mercury_flux_at(
     let accepted = receiver.insert(amount);
     if accepted > 0 {
         store_energy_child(&mut nbt, "mercuryFluxHandler", receiver.energy);
+        if id == "theurgy:logistics_mercury_flux_connector" {
+            store_energy_child(&mut nbt, "buffer", receiver.energy);
+        }
         let _ = be.merge_data(host_ref, nbt);
         host_ref.block_entity_sync(target);
     }

@@ -3,16 +3,17 @@
 //! directional attachment survival, divination rods, mercurial wand, copper
 //! wire helpers, nexus UUIDs, crafting attunement, and full tooltip parity.
 
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use mod_api::text::TextStyle;
 use mod_api::{
-    BlockState, BlockUpdateFlags, CanSurviveEvent, ClientHost, Compound, Direction, Flow, Hand,
-    Host, HostSide, HostTransaction, Identifier, InteractionResult, InventoryTickEvent,
+    BlockFace, BlockState, BlockUpdateFlags, CanSurviveEvent, ClientHost, Compound, Direction,
+    Flow, Hand, Host, HostSide, HostTransaction, Identifier, InteractionResult, InventoryTickEvent,
     ItemDecorationsEvent, ItemKey, ItemPart, ItemPlace, ItemStack, LevelHost, LevelRef,
     LevelTicksHost, LivingEntityUseItemFinishEvent, OnBlockPlacedByEvent, OnDestroyedByPlayerEvent,
     PrepareItemCraftEvent, ReleaseUsingEvent, RightClickBlockEvent, ServerHost, SoundSource,
-    StateForPlacementEvent, Tag, Text, TooltipEvent, UpdateShapeEvent, UseAnimation,
+    StateForPlacementEvent, SupportType, Tag, Text, TooltipEvent, UpdateShapeEvent, UseAnimation,
     UseAnimationEvent, UseDurationEvent, UseItemEvent, UseOnEvent,
 };
 
@@ -196,16 +197,27 @@ pub fn component_i32(host_ref: &dyn Host, stack: &ItemStack, id: &str) -> Option
     }
 }
 
+struct RawComponent<'a>(&'a str);
+
+impl mod_api::Component for RawComponent<'_> {
+    type Value = Tag;
+    fn id(&self) -> &str {
+        self.0
+    }
+    fn decode(&self, value: &Tag) -> Option<Tag> {
+        Some(value.clone())
+    }
+    fn encode(&self, value: Tag) -> Tag {
+        value
+    }
+}
+
 pub fn set_stack_component(stack: &mut ItemStack, id: &str, value: Tag) {
-    let mut patch = Compound::new();
-    patch.insert(id.into(), value);
-    let _ = stack.apply_components(&patch);
+    let _ = stack.set(&RawComponent(id), value);
 }
 
 pub fn remove_stack_component(stack: &mut ItemStack, id: &str) {
-    let mut patch = Compound::new();
-    patch.insert(format!("!{id}").as_str().into(), Tag::End);
-    let _ = stack.apply_components(&patch);
+    stack.remove(&RawComponent(id));
 }
 
 pub fn update_player_hand(
@@ -496,6 +508,90 @@ pub fn can_survive(level: &dyn LevelHost, event: &mut CanSurviveEvent) -> Option
         .is_none_or(is_air_name);
     let support_sturdy = !support_air;
     attachment_survives(&block, support_air, support_sturdy)
+}
+
+static PENDING_SUPPORT_CHECKS: Mutex<Vec<(String, [i32; 3])>> = Mutex::new(Vec::new());
+
+/// Record a changed block position when an adjacent emitter's support face may
+/// have changed (`Hooks::block_changed`, matching Java `DirectionalBlock.updateShape`).
+pub fn on_neighbor_block_changed(
+    level: &dyn LevelHost,
+    event: &mod_api::BlockChangedEvent,
+) {
+    let changed = [event.pos.x, event.pos.y, event.pos.z];
+    let offsets: [[i32; 3]; 6] = [
+        [0, -1, 0],
+        [0, 1, 0],
+        [0, 0, -1],
+        [0, 0, 1],
+        [-1, 0, 0],
+        [1, 0, 0],
+    ];
+    let has_adj_emitter = offsets.iter().any(|o| {
+        let adj = [changed[0] + o[0], changed[1] + o[1], changed[2] + o[2]];
+        level.block_state(adj).and_then(|s| level.state_block(s)).is_some_and(|b| {
+            matches!(
+                b,
+                "theurgy:caloric_flux_emitter"
+                    | "theurgy:mercury_flux_emitter"
+                    | "theurgy:sulfuric_flux_emitter"
+            )
+        })
+    });
+    if has_adj_emitter
+        && let Ok(mut pending) = PENDING_SUPPORT_CHECKS.lock()
+    {
+        pending.push((event.dimension.key().id().to_owned(), changed));
+    }
+}
+
+/// Authoritative server-side sturdy-face check drained on `server_tick`.
+pub fn drain_support_checks(host_ref: &mut dyn ServerHost) {
+    let checks: Vec<(String, [i32; 3])> = PENDING_SUPPORT_CHECKS
+        .lock()
+        .ok()
+        .map(|mut pending| std::mem::take(&mut *pending))
+        .unwrap_or_default();
+    if checks.is_empty() {
+        return;
+    }
+    let neighbors: [([i32; 3], &str, BlockFace); 6] = [
+        ([0, -1, 0], "down", BlockFace::Down),
+        ([0, 1, 0], "up", BlockFace::Up),
+        ([0, 0, -1], "north", BlockFace::North),
+        ([0, 0, 1], "south", BlockFace::South),
+        ([-1, 0, 0], "west", BlockFace::West),
+        ([1, 0, 0], "east", BlockFace::East),
+    ];
+    for (dim, changed) in checks {
+        let Some(level) = host_ref.level(&dim) else {
+            continue;
+        };
+        for (offset, expected_facing, face) in neighbors {
+            let adj = [
+                changed[0] + offset[0],
+                changed[1] + offset[1],
+                changed[2] + offset[2],
+            ];
+            let Some(block) = host::block_id_at(&*host_ref, level, adj) else {
+                continue;
+            };
+            if !matches!(
+                block.as_str(),
+                "theurgy:caloric_flux_emitter"
+                    | "theurgy:mercury_flux_emitter"
+                    | "theurgy:sulfuric_flux_emitter"
+            ) {
+                continue;
+            }
+            if level.block_property(&*host_ref, adj, "facing").as_deref() != Some(expected_facing) {
+                continue;
+            }
+            if level.block_face_sturdy(&*host_ref, changed, face, SupportType::Full) == Some(false) {
+                let _ = level.destroy_block(host_ref, adj, true, None, false);
+            }
+        }
+    }
 }
 
 fn apply_block_item_components(
@@ -1101,43 +1197,49 @@ pub fn right_click_block(
     let Some(level) = host_ref.level(dim) else {
         return Flow::Continue;
     };
-    if logistics::filter_use_on(host_ref, click.player, click.hand, level, click.pos, click.stack) {
-        event.cancelled = true;
-        return Flow::Cancel;
-    }
-    let Some(stack) = click.stack else {
-        return Flow::Continue;
-    };
-    let item_id = stack.item().id(&*host_ref);
-    if item_id == MERCURIAL_WAND
-        && wand_use_on(
-            host_ref,
-            stack,
-            click.player,
-            click.hand,
-            level,
-            click.pos,
-            click.hit.face,
-        )
-    {
-        event.cancelled = true;
-        return Flow::Cancel;
-    }
-    if item_id == WIRE_ITEM
-        && logistics::wire_use_on(
-            host_ref,
-            click.player,
-            click.hand,
-            level,
-            dim,
-            stack,
-            click.pos,
-        )
-    {
+    if right_click_block_direct(
+        host_ref,
+        click.player,
+        click.hand,
+        level,
+        dim,
+        click.pos,
+        click.hit.face,
+        click.stack,
+    ) {
         event.cancelled = true;
         return Flow::Cancel;
     }
     Flow::Continue
+}
+
+/// Direct entry shared by `right_click_block` and `/theurgy_interact`.
+#[allow(clippy::too_many_arguments)]
+pub fn right_click_block_direct(
+    host_ref: &mut dyn ServerHost,
+    player: u128,
+    hand: Hand,
+    level: LevelRef,
+    dim: &str,
+    pos: [i32; 3],
+    face: [i32; 3],
+    stack: Option<&ItemStack>,
+) -> bool {
+    if logistics::filter_use_on(host_ref, player, hand, level, pos, stack) {
+        return true;
+    }
+    let Some(stack) = stack else {
+        return false;
+    };
+    let item_id = stack.item().id(&*host_ref);
+    if item_id == MERCURIAL_WAND && wand_use_on(host_ref, stack, player, hand, level, pos, face) {
+        return true;
+    }
+    if item_id == WIRE_ITEM && logistics::wire_use_on(host_ref, player, hand, level, dim, stack, pos)
+    {
+        return true;
+    }
+    false
 }
 
 /// `DivinationRodRecipe.assemble`: copy sulfur source into newly crafted rod.
@@ -1525,6 +1627,20 @@ impl ItemPart for TheurgyItemPart {
         host_side: HostSide<'_>,
         event: &mut UseItemEvent<'_>,
     ) -> Option<InteractionResult> {
+        if let HostSide::Client(client_host) = host_side {
+            let item_id = event.stack.item().id(client_host);
+            if item_id == "theurgy:the_hermetica" && client::open_book(client_host) {
+                return Some(InteractionResult::Success);
+            }
+            if matches!(
+                item_id.as_str(),
+                "theurgy:list_filter" | "theurgy:attribute_filter"
+            ) && client::open_filter(client_host, event.stack, event.hand)
+            {
+                return Some(InteractionResult::Success);
+            }
+            return None;
+        }
         let HostSide::Server(host_ref) = host_side else {
             return None;
         };

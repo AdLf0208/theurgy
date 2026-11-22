@@ -4,10 +4,11 @@
 
 use mod_api::serde_json::{self, Value};
 use mod_api::{
-    Command, CommandArgumentValue, Flow, Host, LevelRef, RunModCommandEvent, ServerHost, Tag, Text,
+    Command, CommandArgumentValue, Flow, Hand, Host, ItemPlace, LevelRef, RunModCommandEvent,
+    ServerHost, Tag, Text,
 };
 
-use crate::{host, logistics};
+use crate::{host, interactions, items, logistics};
 
 pub fn tag_json(tag: &Tag) -> Value {
     match tag {
@@ -37,6 +38,11 @@ pub fn register(commands: &mut Vec<Command>) {
     commands.push(Command::new("theurgy_probe <pos:block_pos>"));
     commands.push(Command::new(
         "theurgy_state <pos:block_pos> <key:word> <value:word>",
+    ));
+    commands.push(Command::new("theurgy_interact <pos:block_pos> <face:word>"));
+    commands.push(Command::new("theurgy_proxy_read <pos:block_pos>"));
+    commands.push(Command::new(
+        "theurgy_proxy_drain <pos:block_pos> <amount:integer>",
     ));
 }
 
@@ -118,7 +124,14 @@ pub fn run(host_ref: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) ->
     let Some(root) = event.command.literals.first().map(String::as_str) else {
         return Flow::Continue;
     };
-    if !matches!(root, "theurgy_probe" | "theurgy_state") {
+    if !matches!(
+        root,
+        "theurgy_probe"
+            | "theurgy_state"
+            | "theurgy_interact"
+            | "theurgy_proxy_read"
+            | "theurgy_proxy_drain"
+    ) {
         return Flow::Continue;
     }
     if event.source.permission().level() < 4 {
@@ -176,6 +189,94 @@ pub fn run(host_ref: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) ->
                     r#"{"error":"usage: theurgy_state <x y z> <key> <value>"}"#.to_owned(),
                 );
             }
+            Flow::Cancel
+        }
+        "theurgy_interact" => {
+            let face_name = event.command.argument("face").and_then(|v| match v {
+                CommandArgumentValue::String(w) => Some(w.clone()),
+                _ => None,
+            });
+            let face = match face_name.as_deref() {
+                Some("down") => [0, -1, 0],
+                Some("up") => [0, 1, 0],
+                Some("north") => [0, 0, -1],
+                Some("south") => [0, 0, 1],
+                Some("west") => [-1, 0, 0],
+                Some("east") => [1, 0, 0],
+                _ => {
+                    feedback(host_ref, r#"{"error":"invalid face"}"#.to_owned());
+                    return Flow::Cancel;
+                }
+            };
+            let Some(player) = host_ref.players().acting_player() else {
+                feedback(host_ref, r#"{"error":"player required"}"#.to_owned());
+                return Flow::Cancel;
+            };
+            let Some(player_uuid) = player.entity().uuid(host_ref) else {
+                feedback(host_ref, r#"{"error":"player uuid missing"}"#.to_owned());
+                return Flow::Cancel;
+            };
+            let held = ItemPlace::PlayerHand {
+                player: player_uuid,
+                hand: Hand::Main,
+            }
+            .stack(host_ref)
+            .filter(|s| s.count() > 0);
+            let mut canceled = items::right_click_block_direct(
+                host_ref,
+                player_uuid,
+                Hand::Main,
+                level,
+                &dim,
+                pos,
+                face,
+                held.as_ref(),
+            );
+            if !canceled {
+                let res = if held.is_some() {
+                    interactions::interact_with_item(
+                        host_ref,
+                        level,
+                        player_uuid,
+                        Hand::Main,
+                        pos,
+                        face,
+                        held.as_ref(),
+                    )
+                } else {
+                    interactions::interact_empty_hand(host_ref, level, player_uuid, pos)
+                };
+                canceled = res.is_some();
+            }
+            let state = probe_state(&*host_ref, level, &dim, pos);
+            feedback(
+                host_ref,
+                serde_json::json!({"ok": true, "canceled": canceled, "state": state}).to_string(),
+            );
+            Flow::Cancel
+        }
+        "theurgy_proxy_read" => {
+            let result = logistics::proxy_read_fluid(host_ref, level, &dim, pos);
+            feedback(
+                host_ref,
+                serde_json::json!({"fluid": result}).to_string(),
+            );
+            Flow::Cancel
+        }
+        "theurgy_proxy_drain" => {
+            let amount = event
+                .command
+                .argument("amount")
+                .and_then(|v| match v {
+                    CommandArgumentValue::Integer(n) => Some(*n),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            let drained = logistics::proxy_drain_fluid(host_ref, level, &dim, pos, amount);
+            feedback(
+                host_ref,
+                serde_json::json!({"drained": drained}).to_string(),
+            );
             Flow::Cancel
         }
         _ => Flow::Continue,

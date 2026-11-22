@@ -140,12 +140,19 @@ pub fn read_state(nbt: &Compound) -> LogisticsState {
         Some(Tag::Short(v)) if (0..6).contains(v) => Some(*v as u8),
         _ => None,
     };
-    let flux_buffer = match nbt.get(&"buffer".into()) {
-        Some(Tag::Compound(child)) => host::int(child, "energy", 0),
-        _ => match nbt.get(&"mercuryFluxHandler".into()) {
-            Some(Tag::Compound(child)) => host::int(child, "energy", 0),
-            _ => host::int(nbt, "fluxBuffer", 0),
-        },
+    let from_handler = match nbt.get(&"mercuryFluxHandler".into()) {
+        Some(Tag::Compound(child)) => Some(host::int(child, "energy", 0)),
+        _ => None,
+    };
+    let from_buffer = match nbt.get(&"buffer".into()) {
+        Some(Tag::Compound(child)) => Some(host::int(child, "energy", 0)),
+        _ => None,
+    };
+    let flux_buffer = match (from_handler, from_buffer) {
+        (Some(h), Some(b)) => h.max(b),
+        (Some(h), None) => h,
+        (None, Some(b)) => b,
+        (None, None) => host::int(nbt, "fluxBuffer", 0),
     };
     LogisticsState {
         enabled,
@@ -649,18 +656,25 @@ pub fn filter_use_on(
         return false;
     }
     let template = filter::stack_to_template(&*host_ref, stack);
-    let place = ItemPlace::PlayerHand {
-        player: player_id,
-        hand,
+    let Some(player) = host_ref.player(player_id) else {
+        return false;
     };
-    let resource = ItemResource::of(stack);
+    let slot = match hand {
+        Hand::Main => player.selected_slot(&*host_ref).unwrap_or(0) as u32,
+        Hand::Off => 40,
+    };
+    let remainder = if stack.count() > 1 {
+        let mut rem = stack.clone();
+        let _ = rem.set_count(stack.count() - 1);
+        Some(rem)
+    } else {
+        None
+    };
     let moved = host_ref
-        .transaction(|host_ref, tx| {
-            if place.extract(host_ref, tx, &resource, 1) == 1 {
-                Ok(())
-            } else {
-                Err(())
-            }
+        .transaction(|host_ref, _tx| {
+            player
+                .set_inventory_slot(host_ref, slot, remainder)
+                .map_err(|_| ())
         })
         .is_ok();
     if moved {
@@ -1276,6 +1290,104 @@ pub fn probe_nexus_partners(host_ref: &dyn Host, level: LevelRef, dim: &str, pos
             })
         })
         .unwrap_or(0)
+}
+
+fn proxy_fluid_target(
+    host_ref: &mut dyn ServerHost,
+    level: LevelRef,
+    dim: &str,
+    pos: Pos,
+) -> Option<(Pos, u8, usize, String, i32)> {
+    let be = host_ref.block_entity(level, pos)?;
+    let mut own_nbt = be.data(&*host_ref).unwrap_or_default();
+    let nexus_id = java_nexus_id(&own_nbt);
+    let wired = wire_network(&*host_ref, level, dim, pos, &own_nbt);
+    let mut probes: Vec<Pos> = nodes_map()
+        .read()
+        .ok()
+        .and_then(|m| {
+            m.get(dim).map(|d| {
+                d.iter()
+                    .filter(|(p, node)| {
+                        node.block_id == "theurgy:logistics_capability_probe"
+                            && (wired.contains(*p)
+                                || (nexus_id.is_some()
+                                    && node.nexus_id.as_deref() == nexus_id.as_deref()))
+                    })
+                    .map(|(p, _)| *p)
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    probes.sort_by_key(|p| wire_pos_long(*p));
+    if probes.is_empty() {
+        return None;
+    }
+    let index =
+        (host::int(&own_nbt, "roundRobinIndex", 0) + 1).rem_euclid(probes.len() as i32) as usize;
+    host::set_int(&mut own_nbt, "roundRobinIndex", index as i32);
+    let _ = be.merge_data(host_ref, own_nbt);
+    let probe = probes[index];
+    let facing = facing_of(&*host_ref, level, probe);
+    let target = attached(probe, facing);
+    let dir = host::ordinal_to_direction(facing);
+    let cap = level.capability(host_ref, &FLUIDS, target, Some(dir))?;
+    let size = cap.size(host_ref);
+    for idx in 0..size {
+        let amt = cap.amount(host_ref, idx);
+        if amt > 0
+            && let Some(res) = cap.resource(host_ref, idx)
+            && let Some(fluid_id) = res.fluid().key().map(|k| k.id(&*host_ref))
+        {
+            return Some((target, facing, idx, fluid_id, amt as i32));
+        }
+    }
+    None
+}
+
+pub fn proxy_read_fluid(
+    host_ref: &mut dyn ServerHost,
+    level: LevelRef,
+    dim: &str,
+    pos: Pos,
+) -> Option<(String, i32)> {
+    proxy_fluid_target(host_ref, level, dim, pos).map(|(_, _, _, fluid, amount)| (fluid, amount))
+}
+
+pub fn proxy_drain_fluid(
+    host_ref: &mut dyn ServerHost,
+    level: LevelRef,
+    dim: &str,
+    pos: Pos,
+    amount: i32,
+) -> i32 {
+    if amount <= 0 {
+        return 0;
+    }
+    let Some((target, facing, slot_idx, fluid, _)) = proxy_fluid_target(host_ref, level, dim, pos)
+    else {
+        return 0;
+    };
+    let Some(fluid_key) = host_ref.fluid_key(&fluid) else {
+        return 0;
+    };
+    let dir = host::ordinal_to_direction(facing);
+    let res = FluidResource::of(&FluidStack::new(fluid_key, 1));
+    let extracted = host_ref.transaction(|host_ref, tx| {
+        let cap = level
+            .capability(host_ref, &FLUIDS, target, Some(dir))
+            .ok_or(())?;
+        Ok::<u32, ()>(cap.extract(host_ref, tx, slot_idx, &res, amount as u32))
+    });
+    match extracted {
+        Ok(moved) => {
+            if moved > 0 {
+                host_ref.block_entity_sync(target);
+            }
+            moved as i32
+        }
+        Err(_) => 0,
+    }
 }
 
 #[cfg(test)]
