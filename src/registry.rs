@@ -13,7 +13,9 @@ use mod_api::{
     UpdateShapeEvent, UseItemOnEvent, UseWithoutItemEvent,
 };
 
-use crate::{fluids, flux, heat, incubation, interactions, items, machines, recipes, reformation};
+use crate::{
+    fluids, flux, heat, incubation, interactions, items, logistics, machines, recipes, reformation,
+};
 
 /// All Theurgy blocks that carry a block entity, mirroring `BlockEntityRegistry`.
 pub const BLOCK_ENTITIES: &[&str] = &[
@@ -247,6 +249,16 @@ pub fn component_types(types: &mut Vec<String>) {
     for name in COMPONENT_TYPES {
         types.push(format!("theurgy:{name}"));
     }
+    // CodeDefinedGUI 1.14.0 filter components share the stack codec so filters
+    // survive insertion, removal and world reloads.
+    for id in [
+        "codedefinedgui:list_filter_contents",
+        "codedefinedgui:list_filter_config",
+        "codedefinedgui:attribute_filter_reference",
+        "codedefinedgui:attribute_filter_config",
+    ] {
+        types.push(id.to_owned());
+    }
 }
 
 /// Shared Part attached once to every declared Theurgy block entity type.
@@ -281,6 +293,9 @@ impl BlockPart for TheurgyBlockPart {
         host: &mut dyn ServerHost,
         event: &mut OnDestroyedByPlayerEvent<'_>,
     ) -> Option<bool> {
+        let dim = host.dimension().to_owned();
+        logistics::forget_node(&dim, event.pos);
+        machines::forget_vat_signal(&dim, event.pos);
         items::on_destroyed_by_player(host, event)
     }
 
@@ -363,6 +378,9 @@ impl BlockEntityPart for TheurgyBlockPart {
             | "theurgy:caloric_flux_emitter"
             | "theurgy:mercury_flux_emitter" => {
                 flux::tick(host_ref, &id, pos, &mut event.entity);
+            }
+            s if s.starts_with("theurgy:logistics_") => {
+                logistics::tick(host_ref, &id, pos, &mut event.entity);
             }
             _ => {}
         }
@@ -500,12 +518,17 @@ mod tests {
     }
 
     #[test]
-    fn all_component_types_are_theurgy_namespaced() {
+    fn all_component_types_are_namespaced() {
         let mut types = Vec::new();
         component_types(&mut types);
-        assert_eq!(types.len(), COMPONENT_TYPES.len());
-        assert!(types.iter().all(|t| t.starts_with("theurgy:")));
+        assert_eq!(types.len(), COMPONENT_TYPES.len() + 4);
+        assert!(
+            types
+                .iter()
+                .all(|t| t.starts_with("theurgy:") || t.starts_with("codedefinedgui:"))
+        );
         assert!(types.contains(&"theurgy:mercury_flux_storage".to_owned()));
         assert!(types.contains(&"theurgy:logistics_nexus_id".to_owned()));
+        assert!(types.contains(&"codedefinedgui:list_filter_config".to_owned()));
     }
 }

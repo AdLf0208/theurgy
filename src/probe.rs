@@ -7,7 +7,7 @@ use mod_api::{
     Command, CommandArgumentValue, Flow, Host, LevelRef, RunModCommandEvent, ServerHost, Tag, Text,
 };
 
-use crate::host;
+use crate::{host, logistics};
 
 pub fn tag_json(tag: &Tag) -> Value {
     match tag {
@@ -44,7 +44,7 @@ fn feedback(host_ref: &mut dyn ServerHost, text: String) {
     let _ = host_ref.commands().feedback(Text::literal(text));
 }
 
-fn probe_state(host_ref: &dyn Host, level: LevelRef, pos: [i32; 3]) -> Value {
+fn probe_state(host_ref: &dyn Host, level: LevelRef, dim: &str, pos: [i32; 3]) -> Value {
     let state = level.block_state(host_ref, pos);
     let serialized = state
         .and_then(|s| host_ref.block_state_string(s))
@@ -105,6 +105,8 @@ fn probe_state(host_ref: &dyn Host, level: LevelRef, pos: [i32; 3]) -> Value {
         "data": data,
         "capabilities": {
             "mercury_flux_capacity": mercury_flux_capacity,
+            "insert_targets": logistics::probe_insert_targets(host_ref, level, dim, pos),
+            "nexus_partners": logistics::probe_nexus_partners(host_ref, level, dim, pos),
         },
     })
 }
@@ -126,12 +128,12 @@ pub fn run(host_ref: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) ->
         );
         return Flow::Cancel;
     }
-    let level = event
+    let dim = event
         .command
         .dimension
         .id(&*host_ref)
-        .and_then(|id| host_ref.level(&id))
-        .or_else(|| host::level_in_place(host_ref));
+        .unwrap_or_else(|| host_ref.dimension().to_owned());
+    let level = host_ref.level(&dim).or_else(|| host::level_in_place(host_ref));
     let Some(level) = level else {
         feedback(host_ref, r#"{"error":"no level"}"#.to_owned());
         return Flow::Cancel;
@@ -149,7 +151,7 @@ pub fn run(host_ref: &mut dyn ServerHost, event: &mut RunModCommandEvent<'_>) ->
     };
     match root {
         "theurgy_probe" => {
-            let reply = probe_state(&*host_ref, level, pos);
+            let reply = probe_state(&*host_ref, level, &dim, pos);
             feedback(host_ref, reply.to_string());
             Flow::Cancel
         }

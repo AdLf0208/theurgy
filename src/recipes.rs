@@ -45,6 +45,7 @@ pub struct CachedRecipe {
 #[derive(Default)]
 struct Cache {
     by_type: HashMap<&'static str, Arc<[CachedRecipe]>>,
+    cooking: HashMap<&'static str, Vec<Ingredient>>,
 }
 
 static CACHE: OnceLock<RwLock<Cache>> = OnceLock::new();
@@ -56,6 +57,7 @@ fn cache() -> &'static RwLock<Cache> {
 pub fn clear() {
     if let Ok(mut guard) = cache().write() {
         guard.by_type.clear();
+        guard.cooking.clear();
     }
 }
 
@@ -126,9 +128,32 @@ pub fn publish(host: &dyn Host) {
             .collect();
         next.insert(kind, Arc::from(rows));
     }
+    let mut cooking = HashMap::with_capacity(3);
+    for cook_kind in ["minecraft:smelting", "minecraft:smoking", "minecraft:blasting"] {
+        let mut ings = Vec::new();
+        for recipe in host.recipes_of_type(cook_kind).iter() {
+            if let Some(raw) = recipe.json.get("ingredient")
+                && let Some(parsed) = parse_ingredient(host, raw)
+            {
+                ings.push(parsed);
+            }
+        }
+        cooking.insert(cook_kind, ings);
+    }
     if let Ok(mut guard) = cache().write() {
         guard.by_type = next;
+        guard.cooking = cooking;
     }
+}
+
+pub fn matches_cooking(host: &dyn Host, kind: &str, stack: &ItemStack) -> bool {
+    let Ok(guard) = cache().read() else {
+        return false;
+    };
+    guard
+        .cooking
+        .get(kind)
+        .is_some_and(|ings| ings.iter().any(|ing| ing.test(host, stack)))
 }
 
 /// Snapshot of cached recipes for `kind` (e.g. `"theurgy:calcination"`).

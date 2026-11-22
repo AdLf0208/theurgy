@@ -16,7 +16,7 @@ use mod_api::{
     UseAnimationEvent, UseDurationEvent, UseItemEvent, UseOnEvent,
 };
 
-use crate::{config, host, selection};
+use crate::{config, host, logistics, selection};
 
 /// Blocks whose Java class is a double-high apparatus.
 pub const DOUBLE_HIGH: [&str; 4] = [
@@ -1088,7 +1088,7 @@ pub fn change_wand_mode(host_ref: &mut dyn ServerHost, player_id: u128, delta: i
     true
 }
 
-/// Early `right_click_block` for Mercurial Wand (and copper wire in Step 7).
+/// Early `right_click_block` for filter connectors, Mercurial Wand and Copper Wire.
 pub fn right_click_block(
     host_ref: &mut dyn ServerHost,
     event: &mut RightClickBlockEvent<'_>,
@@ -1097,10 +1097,15 @@ pub fn right_click_block(
         return Flow::Continue;
     }
     let click = event.click;
-    let Some(stack) = click.stack else {
+    let dim = click.dimension.key().id();
+    let Some(level) = host_ref.level(dim) else {
         return Flow::Continue;
     };
-    let Some(level) = host_ref.level(click.dimension.key().id()) else {
+    if logistics::filter_use_on(host_ref, click.player, click.hand, level, click.pos, click.stack) {
+        event.cancelled = true;
+        return Flow::Cancel;
+    }
+    let Some(stack) = click.stack else {
         return Flow::Continue;
     };
     let item_id = stack.item().id(&*host_ref);
@@ -1113,6 +1118,20 @@ pub fn right_click_block(
             level,
             click.pos,
             click.hit.face,
+        )
+    {
+        event.cancelled = true;
+        return Flow::Cancel;
+    }
+    if item_id == WIRE_ITEM
+        && logistics::wire_use_on(
+            host_ref,
+            click.player,
+            click.hand,
+            level,
+            dim,
+            stack,
+            click.pos,
         )
     {
         event.cancelled = true;

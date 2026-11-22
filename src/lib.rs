@@ -4,6 +4,7 @@
 pub mod commands;
 pub mod config;
 pub mod engine;
+pub mod filter;
 pub mod fluids;
 pub mod flux;
 pub mod heat;
@@ -11,6 +12,7 @@ pub mod host;
 pub mod incubation;
 pub mod interactions;
 pub mod items;
+pub mod logistics;
 pub mod machines;
 pub mod probe;
 pub mod recipes;
@@ -51,6 +53,7 @@ impl Hooks for Mod {
         recipes::clear();
         machines::clear_signals();
         selection::clear();
+        logistics::clear();
     }
 
     fn tags_updated(&self, host: HostSide<'_>, _: &mut TagsUpdatedEvent) {
@@ -63,6 +66,7 @@ impl Hooks for Mod {
         recipes::clear();
         machines::clear_signals();
         selection::clear();
+        logistics::clear();
     }
 
     fn right_click_block(
@@ -131,6 +135,7 @@ impl Hooks for Mod {
     fn register_commands(&self, _: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
         commands::declare(event.commands);
         probe::register(event.commands);
+        filter::register(event.commands);
     }
 
     fn run_mod_command(
@@ -139,6 +144,9 @@ impl Hooks for Mod {
         event: &mut RunModCommandEvent<'_>,
     ) -> Flow {
         if matches!(commands::run(host, event), Flow::Cancel) {
+            return Flow::Cancel;
+        }
+        if matches!(filter::run(host, event), Flow::Cancel) {
             return Flow::Cancel;
         }
         probe::run(host, event)
