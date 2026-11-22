@@ -5,12 +5,12 @@
 use std::sync::OnceLock;
 
 use mod_api::{
-    AnalogOutputEvent, BlockEntityEvent, BlockEntityPart, BlockEntityTickEvent,
-    BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockSignalEvent, BlockState,
-    CanSurviveEvent, Compound, HasAnalogOutputEvent, Host, InteractionResult, IsSignalSourceEvent,
-    LevelHost, LevelSide, LevelTicksHost, ModContainer, ModEnergyBuffer, ModFluidTanks,
-    OnDestroyedByPlayerEvent, ParticleKey, Registrar, ServerHost, StateForPlacementEvent, Tag,
-    UpdateShapeEvent, UseItemOnEvent, UseWithoutItemEvent,
+    AnalogOutputEvent, BiomeModifier, BiomeModifierOperation, BlockEntityEvent, BlockEntityPart,
+    BlockEntityTickEvent, BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart,
+    BlockSignalEvent, BlockState, CanSurviveEvent, Compound, HasAnalogOutputEvent, Host,
+    InteractionResult, IsSignalSourceEvent, LevelHost, LevelSide, LevelTicksHost, ModContainer,
+    ModEnergyBuffer, ModFluidTanks, OnDestroyedByPlayerEvent, ParticleKey, Registrar, ServerHost,
+    StateForPlacementEvent, Tag, UpdateShapeEvent, UseItemOnEvent, UseWithoutItemEvent,
 };
 
 use crate::{
@@ -402,6 +402,18 @@ pub fn register(r: &mut dyn Registrar) {
     for recipe_type in recipes::RECIPE_TYPES {
         r.register_recipe_type(recipe_type);
     }
+
+    // Data-driven sal ammoniac ore generation (replaces legacy chunk_load hook).
+    let _ = r.declare_biome_modifier(
+        "add_sal_ammoniac_ore",
+        BiomeModifier {
+            biomes: vec!["#minecraft:is_overworld".to_owned()],
+            operation: BiomeModifierOperation::AddFeatures {
+                features: vec!["theurgy:sal_ammoniac_ore".to_owned()],
+                step: "underground_ores".to_owned(),
+            },
+        },
+    );
 
     for &full_id in BLOCK_ENTITIES {
         let path = full_id.strip_prefix("theurgy:").unwrap_or(full_id);
