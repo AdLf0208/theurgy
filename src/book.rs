@@ -793,6 +793,13 @@ fn images(page: &Value) -> Vec<String> {
 
 // ---- category (node) screen ----------------------------------------------
 
+/// GUI pixels per texel of a square-ish backdrop. One repeat spans twice the frame's longer
+/// side at zoom 1 and scales with the map's zoom (0.5 to 1 in the book), so the texture always
+/// covers the frame once and is never tiled inside it; zooming in enlarges it with the nodes.
+fn backdrop_px_per_texel(frame_side: f32, zoom: f32, texture_side: f32) -> f32 {
+    frame_side.max(1.0) * 2.0 * zoom / texture_side.max(1.0)
+}
+
 /// Splits `length` GUI pixels of a texture `size` wide that repeats, starting
 /// at texel `start`: `[texel, offset, run]` per piece.
 fn tiles(start: f32, size: f32, length: f32) -> Vec<[f32; 3]> {
@@ -811,27 +818,27 @@ fn draw_category(c: &mut dyn Canvas, ui: &BookUi, w: f32, h: f32, mouse: [f32; 2
     let [ix, iy, iw, ih] = f.inner;
     let category = &ui.data.categories[ui.category];
     let view = ui.views[ui.category];
-    // renderBackground (no parallax layers): one texel per GUI pixel, scrolled.
-    // GuiGraphics.blit repeats the texture past its edge; stretching it over a
-    // frame wider than the texture smeared the texels instead.
+    // Backdrop (the Modonomicon `background`, with no parallax layers in the data): one
+    // texture covers the frame at the map's zoom, so it never shows a seam at the frame
+    // size, and it drifts at half the node scroll speed, which gives the depth behind the map.
     if let Some(bg) = category.get("background").and_then(Value::as_str) {
         let (ns, path) = bg.split_once(':').unwrap_or(("minecraft", bg));
         let name = format!("{ns}:{}", path.trim_start_matches("textures/").trim_end_matches(".png"));
         let (bw, bh) = (num(category, "background_width").max(1.0), num(category, "background_height").max(1.0));
-        let max = bw.max(bh);
-        let x_scale = max * 2.0 / (max + 14.0 - f.outer[2]).max(1.0);
-        let y_scale = max * 2.0 / (max + 14.0 - f.outer[3]).max(1.0);
-        let scale = x_scale.max(y_scale);
-        let x_off = if x_scale == scale { 0.0 } else { (max - (iw + max * 2.0 / scale)) / 2.0 };
-        let y_off = if y_scale == scale { 0.0 } else { (max - (ih + max * 2.0 / scale)) / 2.0 };
-        let u0 = ((view.scroll[0] + max) / scale + x_off).floor().rem_euclid(bw);
-        let v0 = ((view.scroll[1] + max) / scale + y_off).floor().rem_euclid(bh);
         let [tw, th] = c.size(&name);
         let (kx, ky) = (tw / bw, th / bh);
+        let k = backdrop_px_per_texel(iw.max(ih), view.zoom, bw.max(bh));
+        let u0 = (view.scroll[0] * 0.5 / k).rem_euclid(bw);
+        let v0 = (view.scroll[1] * 0.5 / k).rem_euclid(bh);
         let mut drawn = true;
-        for [u, x, w] in tiles(u0, bw, iw) {
-            for [v, y, h] in tiles(v0, bh, ih) {
-                drawn &= c.sprite(&name, [u * kx, v * ky, w * kx, h * ky], [ix + x, iy + y, w, h], WHITE);
+        for [u, x, run_u] in tiles(u0, bw, iw / k) {
+            for [v, y, run_v] in tiles(v0, bh, ih / k) {
+                drawn &= c.sprite(
+                    &name,
+                    [u * kx, v * ky, run_u * kx, run_v * ky],
+                    [ix + x * k, iy + y * k, run_u * k, run_v * k],
+                    WHITE,
+                );
             }
         }
         if !drawn {
@@ -1886,6 +1893,16 @@ mod tests {
         assert_eq!(tiles(500.0, 512.0, 900.0), [[500.0, 0.0, 12.0], [0.0, 12.0, 512.0], [0.0, 524.0, 376.0]]);
         assert_eq!(tiles(10.0, 512.0, 100.0), [[10.0, 0.0, 100.0]]);
         assert!(tiles(0.0, 0.0, 100.0).is_empty());
+    }
+
+    // The backdrop covers the frame in one repeat at every zoom the book allows (0.5 to 1).
+    #[test]
+    fn backdrop_covers_the_frame_once_at_every_zoom() {
+        for zoom in [0.5_f32, 0.7, 1.0] {
+            let k = backdrop_px_per_texel(900.0, zoom, 512.0);
+            assert!(512.0 * k >= 900.0, "zoom {zoom}: one repeat must span the frame");
+        }
+        assert!(backdrop_px_per_texel(900.0, 1.0, 512.0) > backdrop_px_per_texel(900.0, 0.5, 512.0));
     }
 
     #[test]

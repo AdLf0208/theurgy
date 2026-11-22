@@ -1588,7 +1588,14 @@ pub fn submit(host_ref: &dyn ClientHost, event: &mut BlockEntitySubmitEvent<'_>)
         submit_fluid_quads(draw, "theurgy:block/sal_ammoniac/still", &cs, FLUID_INSET);
     }
 
+    // The distiller is a two-block apparatus: its upper half carries the same block
+    // entity, but the GeckoLib model already spans both blocks, so only the lower half
+    // draws it. Drawing it on both halves produced the "two copies" with the top sliding
+    // into the lower copy.
+    let draws_model = !(block == "theurgy:distiller"
+        && state_prop(host_ref, state, "half").as_deref() == Some("upper"));
     if let Some(name) = model_name(block)
+        && draws_model
         && let Some(model) = models().get(name)
         && let Some(geometry) = model.geometry.first()
     {
