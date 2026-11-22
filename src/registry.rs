@@ -6,13 +6,14 @@ use std::sync::OnceLock;
 
 use mod_api::{
     AnalogOutputEvent, BlockEntityEvent, BlockEntityPart, BlockEntityTickEvent,
-    BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockSignalEvent, Compound,
-    HasAnalogOutputEvent, Host, InteractionResult, IsSignalSourceEvent, LevelHost, LevelSide,
-    ModContainer, ModEnergyBuffer, ModFluidTanks, ParticleKey, Registrar, ServerHost, Tag,
-    UseItemOnEvent, UseWithoutItemEvent,
+    BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockSignalEvent, BlockState,
+    CanSurviveEvent, Compound, HasAnalogOutputEvent, Host, InteractionResult, IsSignalSourceEvent,
+    LevelHost, LevelSide, LevelTicksHost, ModContainer, ModEnergyBuffer, ModFluidTanks,
+    OnDestroyedByPlayerEvent, ParticleKey, Registrar, ServerHost, StateForPlacementEvent, Tag,
+    UpdateShapeEvent, UseItemOnEvent, UseWithoutItemEvent,
 };
 
-use crate::{fluids, flux, heat, incubation, interactions, machines, recipes, reformation};
+use crate::{fluids, flux, heat, incubation, interactions, items, machines, recipes, reformation};
 
 /// All Theurgy blocks that carry a block entity, mirroring `BlockEntityRegistry`.
 pub const BLOCK_ENTITIES: &[&str] = &[
@@ -255,6 +256,34 @@ pub struct TheurgyBlockPart;
 
 #[mod_api::horizon_part]
 impl BlockPart for TheurgyBlockPart {
+    fn state_for_placement(
+        &self,
+        level: &dyn LevelHost,
+        event: &mut StateForPlacementEvent<'_>,
+    ) -> Option<Option<BlockState>> {
+        items::state_for_placement(level, event)
+    }
+
+    fn update_shape(
+        &self,
+        level: &mut dyn LevelTicksHost,
+        event: &mut UpdateShapeEvent,
+    ) -> Option<BlockState> {
+        items::update_shape(level, event)
+    }
+
+    fn can_survive(&self, level: &dyn LevelHost, event: &mut CanSurviveEvent) -> Option<bool> {
+        items::can_survive(level, event)
+    }
+
+    fn on_destroyed_by_player(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut OnDestroyedByPlayerEvent<'_>,
+    ) -> Option<bool> {
+        items::on_destroyed_by_player(host, event)
+    }
+
     fn use_item_on(
         &self,
         host: &mut dyn ServerHost,
@@ -380,6 +409,21 @@ pub fn register(r: &mut dyn Registrar) {
                 },
             );
         }
+        let item = r.item_key(full_id);
+        r.item_part(item, items::TheurgyItemPart);
+    }
+
+    for &item_id in items::STANDALONE_ITEMS {
+        let item = r.item_key(item_id);
+        r.item_part(item, items::TheurgyItemPart);
+    }
+    for tag in [
+        "theurgy:alchemical_sulfurs",
+        "theurgy:alchemical_niters",
+        "theurgy:alchemical_salts",
+        "theurgy:alchemical_mercuries",
+    ] {
+        r.item_part_tag(tag, items::TheurgyItemPart);
     }
 }
 
