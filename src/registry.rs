@@ -6,15 +6,17 @@ use std::sync::OnceLock;
 
 use mod_api::{
     AnalogOutputEvent, BiomeModifier, BiomeModifierOperation, BlockEntityEvent, BlockEntityPart,
-    BlockEntityTickEvent, BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart,
-    BlockSignalEvent, BlockState, CanSurviveEvent, Compound, HasAnalogOutputEvent, Host,
-    InteractionResult, IsSignalSourceEvent, LevelHost, LevelSide, LevelTicksHost, ModContainer,
-    ModEnergyBuffer, ModFluidTanks, OnDestroyedByPlayerEvent, ParticleKey, Registrar, ServerHost,
+    BlockEntityRenderBoundingBoxEvent, BlockEntitySubmitEvent, BlockEntityTickEvent,
+    BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockSignalEvent, BlockState,
+    CanSurviveEvent, ClientHost, Compound, HasAnalogOutputEvent, Host, InteractionResult,
+    IsSignalSourceEvent, LevelHost, LevelSide, LevelTicksHost, ModContainer, ModEnergyBuffer,
+    ModFluidTanks, OnDestroyedByPlayerEvent, ParticleKey, Registrar, ServerHost,
     StateForPlacementEvent, Tag, UpdateShapeEvent, UseItemOnEvent, UseWithoutItemEvent,
 };
 
 use crate::{
-    fluids, flux, heat, incubation, interactions, items, logistics, machines, recipes, reformation,
+    client, fluids, flux, heat, incubation, interactions, items, logistics, machines, recipes,
+    reformation, render,
 };
 
 /// All Theurgy blocks that carry a block entity, mirroring `BlockEntityRegistry`.
@@ -384,19 +386,49 @@ impl BlockEntityPart for TheurgyBlockPart {
             }
             _ => {}
         }
+        if matches!(
+            id.as_str(),
+            "theurgy:digestion_vat"
+                | "theurgy:incubator_mercury_vessel"
+                | "theurgy:incubator_salt_vessel"
+                | "theurgy:incubator_sulfur_vessel"
+                | "theurgy:reformation_source_pedestal"
+                | "theurgy:reformation_target_pedestal"
+                | "theurgy:reformation_result_pedestal"
+        ) {
+            render::mirror_client_items(&*host_ref, &mut event.entity);
+        }
     }
 
     fn block_entity_update_tag(
         &self,
         event: &mut BlockEntityUpdateTagEvent<'_>,
     ) -> Option<Compound> {
-        Some(event.entity.nbt.clone())
+        render::update_tag(event)
+    }
+
+    fn block_entity_submit(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut BlockEntitySubmitEvent<'_>,
+    ) {
+        render::submit(host, event);
+    }
+
+    fn block_entity_render_bounding_box(
+        &self,
+        _: &dyn ClientHost,
+        event: &mut BlockEntityRenderBoundingBoxEvent<'_>,
+    ) {
+        render::bounds(event);
     }
 }
 
 /// Declare all block entity types, container/fluid capabilities, recipe types, and particle keys.
 pub fn register(r: &mut dyn Registrar) {
     particles::init(r);
+    client::register_payloads(r);
+    client::register_keys(r);
     let _ = r.fluid_key(fluids::SAL_AMMONIAC);
 
     for recipe_type in recipes::RECIPE_TYPES {

@@ -8,15 +8,15 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use mod_api::text::TextStyle;
 use mod_api::{
     BlockState, BlockUpdateFlags, CanSurviveEvent, ClientHost, Compound, Direction, Flow, Hand,
-    Host, HostSide, HostTransaction, Identifier, InteractionResult, InventoryTickEvent, ItemKey,
-    ItemPart, ItemPlace, ItemStack, LevelHost, LevelRef, LevelTicksHost,
-    LivingEntityUseItemFinishEvent, OnBlockPlacedByEvent, OnDestroyedByPlayerEvent,
+    Host, HostSide, HostTransaction, Identifier, InteractionResult, InventoryTickEvent,
+    ItemDecorationsEvent, ItemKey, ItemPart, ItemPlace, ItemStack, LevelHost, LevelRef,
+    LevelTicksHost, LivingEntityUseItemFinishEvent, OnBlockPlacedByEvent, OnDestroyedByPlayerEvent,
     PrepareItemCraftEvent, ReleaseUsingEvent, RightClickBlockEvent, ServerHost, SoundSource,
     StateForPlacementEvent, Tag, Text, TooltipEvent, UpdateShapeEvent, UseAnimation,
     UseAnimationEvent, UseDurationEvent, UseItemEvent, UseOnEvent,
 };
 
-use crate::{config, host, logistics, selection};
+use crate::{client, config, host, logistics, selection};
 
 /// Blocks whose Java class is a double-high apparatus.
 pub const DOUBLE_HIGH: [&str; 4] = [
@@ -1441,6 +1441,10 @@ pub struct TheurgyItemPart;
 impl ItemPart for TheurgyItemPart {
     fn tooltip(&self, host: &dyn ClientHost, event: &mut TooltipEvent<'_>) {
         tooltip(host, event);
+    }
+
+    fn item_decorations(&self, host: &dyn ClientHost, event: &mut ItemDecorationsEvent<'_>) {
+        client::item_decorations(host, event);
     }
 
     fn on_block_placed_by(

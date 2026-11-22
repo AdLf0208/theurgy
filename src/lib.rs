@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: MIT
 //! Theurgy for Horizon — full SDK package (`api = "0.2"`).
 
+pub mod book;
+pub mod client;
 pub mod commands;
 pub mod config;
 pub mod engine;
 pub mod filter;
+pub mod filter_client;
 pub mod fluids;
 pub mod flux;
 pub mod heat;
@@ -14,18 +17,25 @@ pub mod interactions;
 pub mod items;
 pub mod logistics;
 pub mod machines;
+pub mod model_data;
 pub mod probe;
+pub mod recipe_client;
 pub mod recipes;
 pub mod reformation;
 pub mod registry;
+pub mod render;
 pub mod selection;
 
 use mod_api::{
-    self, ComponentTypesEvent, EntityPlaceEvent, Flow, Hooks, HostSide, ItemStack,
-    LeftClickBlockEvent, LivingEntityUseItemFinishEvent, PrepareItemCraftEvent,
-    RegisterCommandsEvent, RegisterFluidModelsEvent, Registrar, RegistrationContext,
-    RightClickBlockEvent, RunModCommandEvent, ServerAboutToStartEvent, ServerHost,
-    ServerStoppedEvent, TagsUpdatedEvent,
+    self, ClientHost, ClientTickPostEvent, ComponentTypesEvent, EntityPlaceEvent, Flow,
+    GuiLayerDrawEvent, Hooks, HostSide, InputKeyEvent, InteractionKeyMappingTriggeredEvent,
+    ItemStack, LeftClickBlockEvent, LivingEntityUseItemFinishEvent, MouseScrollingEvent,
+    PlayerLoadFromFileEvent, PlayerLoggedInEvent, PlayerSaveToFileEvent, PrepareItemCraftEvent,
+    RegisterCommandsEvent, RegisterFluidModelsEvent, RegisterGuiLayersEvent, Registrar,
+    RegistrationContext, RightClickBlockEvent, RunModCommandEvent, ScreenCharTypedPreEvent,
+    ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseDraggedPreEvent,
+    ScreenMouseScrolledPreEvent, ScreenRenderPostEvent, ServerAboutToStartEvent, ServerHost,
+    ServerStoppedEvent, StandaloneModelsEvent, TagsUpdatedEvent,
 };
 
 #[derive(Default)]
@@ -49,6 +59,18 @@ impl Hooks for Mod {
         fluids::register_fluid_models(event);
     }
 
+    fn standalone_models(&self, _: &RegistrationContext, event: &mut StandaloneModelsEvent<'_>) {
+        render::standalone_models(event);
+    }
+
+    fn register_gui_layers(
+        &self,
+        _: &RegistrationContext,
+        event: &mut RegisterGuiLayersEvent<'_>,
+    ) {
+        client::register_gui_layers(event);
+    }
+
     fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
         recipes::clear();
         machines::clear_signals();
@@ -67,6 +89,30 @@ impl Hooks for Mod {
         machines::clear_signals();
         selection::clear();
         logistics::clear();
+    }
+
+    fn player_load_from_file(
+        &self,
+        _: &mut dyn ServerHost,
+        event: &mut PlayerLoadFromFileEvent<'_>,
+    ) {
+        client::book_load(event.player, event.directory);
+    }
+
+    fn player_save_to_file(
+        &self,
+        _: &mut dyn ServerHost,
+        event: &mut PlayerSaveToFileEvent<'_>,
+    ) {
+        client::book_save(event.player, event.directory);
+    }
+
+    fn player_logged_in(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut PlayerLoggedInEvent<'_>,
+    ) {
+        client::book_logged_in(host, event.player);
     }
 
     fn right_click_block(
@@ -150,5 +196,77 @@ impl Hooks for Mod {
             return Flow::Cancel;
         }
         probe::run(host, event)
+    }
+
+    fn client_tick_post(&self, host: &mut dyn ClientHost, _: &mut ClientTickPostEvent) {
+        client::client_tick_post(host);
+    }
+
+    fn gui_layer_draw(&self, host: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'_>) {
+        client::gui_layer_draw(host, event);
+    }
+
+    fn input_key(&self, host: &mut dyn ClientHost, event: &mut InputKeyEvent<'_>) {
+        client::input_key(host, event);
+    }
+
+    fn mouse_scrolling(
+        &self,
+        host: &mut dyn ClientHost,
+        event: &mut MouseScrollingEvent,
+    ) -> Flow {
+        client::mouse_scrolling(host, event)
+    }
+
+    fn interaction_key_mapping_triggered(
+        &self,
+        host: &mut dyn ClientHost,
+        event: &mut InteractionKeyMappingTriggeredEvent,
+    ) -> Flow {
+        client::interaction_key(host, event)
+    }
+
+    fn screen_render_post(&self, host: &dyn ClientHost, event: &mut ScreenRenderPostEvent<'_>) {
+        client::screen_render_post(host, event);
+    }
+
+    fn screen_mouse_button_pressed_pre(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut ScreenMouseButtonPressedPreEvent<'_>,
+    ) -> Flow {
+        client::screen_mouse_pressed(host, event)
+    }
+
+    fn screen_mouse_dragged_pre(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut ScreenMouseDraggedPreEvent<'_>,
+    ) -> Flow {
+        client::screen_mouse_dragged(host, event)
+    }
+
+    fn screen_mouse_scrolled_pre(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut ScreenMouseScrolledPreEvent<'_>,
+    ) -> Flow {
+        client::screen_mouse_scrolled(host, event)
+    }
+
+    fn screen_key_pressed_pre(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut ScreenKeyPressedPreEvent<'_>,
+    ) -> Flow {
+        client::screen_key_pressed(host, event)
+    }
+
+    fn screen_char_typed_pre(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut ScreenCharTypedPreEvent<'_>,
+    ) -> Flow {
+        client::screen_char_typed(host, event)
     }
 }
