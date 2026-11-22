@@ -7,11 +7,12 @@ use std::sync::OnceLock;
 use mod_api::{
     AnalogOutputEvent, BlockEntityEvent, BlockEntityPart, BlockEntityTickEvent,
     BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockSignalEvent, Compound,
-    HasAnalogOutputEvent, Host, IsSignalSourceEvent, LevelHost, LevelSide, ModContainer,
-    ModFluidTanks, ParticleKey, Registrar, ServerHost, Tag,
+    HasAnalogOutputEvent, Host, InteractionResult, IsSignalSourceEvent, LevelHost, LevelSide,
+    ModContainer, ModFluidTanks, ParticleKey, Registrar, ServerHost, Tag, UseItemOnEvent,
+    UseWithoutItemEvent,
 };
 
-use crate::{heat, machines, recipes};
+use crate::{fluids, heat, interactions, machines, recipes};
 
 /// All Theurgy blocks that carry a block entity, mirroring `BlockEntityRegistry`.
 pub const BLOCK_ENTITIES: &[&str] = &[
@@ -254,6 +255,22 @@ pub struct TheurgyBlockPart;
 
 #[mod_api::horizon_part]
 impl BlockPart for TheurgyBlockPart {
+    fn use_item_on(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut UseItemOnEvent<'_>,
+    ) -> Option<InteractionResult> {
+        interactions::use_item_on(host, event)
+    }
+
+    fn use_without_item(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut UseWithoutItemEvent<'_>,
+    ) -> Option<InteractionResult> {
+        interactions::use_without_item(host, event)
+    }
+
     fn is_signal_source(&self, level: &dyn LevelHost, event: &mut IsSignalSourceEvent) {
         machines::is_signal_source(level, event);
     }
@@ -297,6 +314,9 @@ impl BlockEntityPart for TheurgyBlockPart {
             "theurgy:pyromantic_brazier" => {
                 heat::tick(host_ref, pos, &mut event.entity);
             }
+            "theurgy:sal_ammoniac_accumulator" | "theurgy:sal_ammoniac_tank" => {
+                fluids::tick(host_ref, &id, pos, &mut event.entity);
+            }
             _ => {}
         }
     }
@@ -312,6 +332,7 @@ impl BlockEntityPart for TheurgyBlockPart {
 /// Declare all block entity types, container/fluid capabilities, recipe types, and particle keys.
 pub fn register(r: &mut dyn Registrar) {
     particles::init(r);
+    let _ = r.fluid_key(fluids::SAL_AMMONIAC);
 
     for recipe_type in recipes::RECIPE_TYPES {
         r.register_recipe_type(recipe_type);

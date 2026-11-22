@@ -283,6 +283,18 @@ pub fn offset_pos(pos: [i32; 3], dir: u8) -> [i32; 3] {
     [pos[0] + d[0], pos[1] + d[1], pos[2] + d[2]]
 }
 
+pub fn face_to_direction(face: [i32; 3]) -> Option<Direction> {
+    match face {
+        [0, -1, 0] => Some(Direction::Down),
+        [0, 1, 0] => Some(Direction::Up),
+        [0, 0, -1] => Some(Direction::North),
+        [0, 0, 1] => Some(Direction::South),
+        [-1, 0, 0] => Some(Direction::West),
+        [1, 0, 0] => Some(Direction::East),
+        _ => None,
+    }
+}
+
 pub fn opposite_dir(dir: u8) -> u8 {
     match dir {
         0 => 1,

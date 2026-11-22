@@ -4,16 +4,18 @@
 pub mod commands;
 pub mod config;
 pub mod engine;
+pub mod fluids;
 pub mod heat;
 pub mod host;
+pub mod interactions;
 pub mod machines;
 pub mod recipes;
 pub mod registry;
 
 use mod_api::{
-    self, ComponentTypesEvent, Flow, Hooks, HostSide, RegisterCommandsEvent, Registrar,
-    RegistrationContext, RunModCommandEvent, ServerAboutToStartEvent, ServerHost,
-    ServerStoppedEvent, TagsUpdatedEvent,
+    self, ComponentTypesEvent, Flow, Hooks, HostSide, RegisterCommandsEvent,
+    RegisterFluidModelsEvent, Registrar, RegistrationContext, RunModCommandEvent,
+    ServerAboutToStartEvent, ServerHost, ServerStoppedEvent, TagsUpdatedEvent,
 };
 
 #[derive(Default)]
@@ -27,6 +29,14 @@ impl Hooks for Mod {
 
     fn component_types(&self, _: &RegistrationContext, event: &mut ComponentTypesEvent<'_>) {
         registry::component_types(event.types);
+    }
+
+    fn register_fluid_models(
+        &self,
+        _: &RegistrationContext,
+        event: &mut RegisterFluidModelsEvent<'_>,
+    ) {
+        fluids::register_fluid_models(event);
     }
 
     fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
