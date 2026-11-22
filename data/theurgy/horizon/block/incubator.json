@@ -1,0 +1,87 @@
+{
+  "template": "minecraft:glass",
+  "item": true,
+  "properties": {
+    "hardness": 1,
+    "explosion_resistance": 1,
+    "requires_tool": false,
+    "sounds": "minecraft:oak_planks"
+  },
+  "shapes": {
+    "property": "half",
+    "values": {
+      "lower": [
+        [
+          0,
+          0,
+          0,
+          1,
+          0.25,
+          1
+        ],
+        [
+          0.125,
+          0.25,
+          0.125,
+          0.875,
+          0.625,
+          0.875
+        ],
+        [
+          0.0625,
+          0.625,
+          0.0625,
+          0.9375,
+          1,
+          0.9375
+        ]
+      ],
+      "upper": [
+        [
+          0,
+          0.75,
+          0,
+          1,
+          0.875,
+          1
+        ],
+        [
+          0.0625,
+          0,
+          0.0625,
+          0.9375,
+          0.75,
+          0.9375
+        ]
+      ]
+    }
+  },
+  "state_properties": {
+    "north": {
+      "type": "boolean"
+    },
+    "east": {
+      "type": "boolean"
+    },
+    "south": {
+      "type": "boolean"
+    },
+    "west": {
+      "type": "boolean"
+    },
+    "half": {
+      "type": "enum",
+      "values": [
+        "lower",
+        "upper"
+      ]
+    }
+  },
+  "default_state": {
+    "north": "false",
+    "east": "false",
+    "south": "false",
+    "west": "false",
+    "half": "lower"
+  }
+}

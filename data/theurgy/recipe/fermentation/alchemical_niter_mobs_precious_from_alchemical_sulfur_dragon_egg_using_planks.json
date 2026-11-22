@@ -1,0 +1,17 @@
+{
+  "type": "theurgy:fermentation",
+  "category": "misc",
+  "fluid": {
+    "amount": 1000,
+    "ingredient": "minecraft:water"
+  },
+  "ingredients": [
+    "theurgy:alchemical_sulfur_dragon_egg",
+    "#minecraft:planks"
+  ],
+  "result": {
+    "count": 4,
+    "id": "theurgy:alchemical_niter_mobs_precious"
+  },
+  "time": 200
+}

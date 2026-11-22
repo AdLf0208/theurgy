@@ -1,0 +1,6 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_tag": "c:gems/emerald"
+  }
+}

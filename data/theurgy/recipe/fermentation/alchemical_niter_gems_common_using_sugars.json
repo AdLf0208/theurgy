@@ -1,0 +1,16 @@
+{
+  "type": "theurgy:fermentation",
+  "category": "misc",
+  "fluid": {
+    "amount": 250,
+    "ingredient": "minecraft:water"
+  },
+  "ingredients": [
+    "#theurgy:alchemical_sulfurs/gems/common",
+    "#c:sugars"
+  ],
+  "result": {
+    "id": "theurgy:alchemical_niter_gems_common"
+  },
+  "time": 200
+}

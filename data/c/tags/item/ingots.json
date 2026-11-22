@@ -1,8 +1,8 @@
 {
   "values": [
-    "minecraft:copper_ingot",
-    "minecraft:gold_ingot",
-    "minecraft:iron_ingot",
-    "minecraft:netherite_ingot"
+    "#c:ingots/copper",
+    "#c:ingots/gold",
+    "#c:ingots/iron",
+    "#c:ingots/netherite"
   ]
 }

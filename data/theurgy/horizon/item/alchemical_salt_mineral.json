@@ -1,3 +1,4 @@
 {
-  "template": "minecraft:gunpowder"
+  "template": "minecraft:diamond",
+  "components": {}
 }

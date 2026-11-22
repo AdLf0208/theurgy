@@ -1,0 +1,14 @@
+{
+  "type": "theurgy:liquefaction",
+  "category": "misc",
+  "ingredient": "#c:gems/emerald",
+  "result": {
+    "type": "theurgy:item",
+    "id": "theurgy:alchemical_sulfur_emerald"
+  },
+  "solvent": {
+    "amount": 100,
+    "ingredient": "theurgy:sal_ammoniac"
+  },
+  "time": 100
+}

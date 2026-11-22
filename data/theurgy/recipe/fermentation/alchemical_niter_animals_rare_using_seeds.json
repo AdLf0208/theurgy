@@ -1,0 +1,16 @@
+{
+  "type": "theurgy:fermentation",
+  "category": "misc",
+  "fluid": {
+    "amount": 500,
+    "ingredient": "minecraft:water"
+  },
+  "ingredients": [
+    "#theurgy:alchemical_sulfurs/animals/rare",
+    "#c:seeds"
+  ],
+  "result": {
+    "id": "theurgy:alchemical_niter_animals_rare"
+  },
+  "time": 200
+}

@@ -1,0 +1,47 @@
+{
+  "template": "minecraft:furnace",
+  "item": true,
+  "properties": {
+    "hardness": 1,
+    "explosion_resistance": 1,
+    "requires_tool": false,
+    "sounds": "minecraft:copper_block"
+  },
+  "shapes": {
+    "property": "half",
+    "values": {
+      "lower": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "upper": [
+        [
+          0.0625,
+          0,
+          0.0625,
+          0.9375,
+          0.375,
+          0.9375
+        ]
+      ]
+    }
+  },
+  "state_properties": {
+    "half": {
+      "type": "enum",
+      "values": [
+        "lower",
+        "upper"
+      ]
+    }
+  },
+  "default_state": {
+    "half": "lower"
+  }
+}

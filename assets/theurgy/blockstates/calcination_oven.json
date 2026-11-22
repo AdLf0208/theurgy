@@ -1,10 +1,9 @@
 {
-  "variants": {
-    "lit=false": {
-      "model": "minecraft:block/furnace"
-    },
-    "lit=true": {
-      "model": "minecraft:block/furnace_on"
+  "multipart": [
+    {
+      "apply": {
+        "model": "theurgy:block/calcination_oven"
+      }
     }
-  }
+  ]
 }

@@ -1,6 +1,6 @@
 {
   "model": {
-    "model": "minecraft:block/furnace",
-    "type": "minecraft:model"
+    "type": "minecraft:model",
+    "model": "theurgy:item/calcination_oven"
   }
 }
