@@ -584,3 +584,83 @@ and `SELFTEST=1` inverts the expectation and ends `FAIL` + `EXIT:1` (`e2e-dialec
 Package 0.2.3: **63,629 B**, SHA-256 `9e2d1543215a32116a2ecc7f435da10390498f2c986657ce030ddeb849f33805`.
 
 Skills: superpowers/using-superpowers,systematic-debugging,test-driven-development,verification-before-completion; BeautifulRust/none (no Rust change)
+
+---
+
+## Full SDK port (0.3.0, branch `full-port`)
+
+Ported the complete Theurgy 1.120.1 mod from `theurgy-horizon` (`horizon/26.3`, legacy `.hnmod` / `horizon-mixin.toml`) into the flat SDK layout (`api = "0.2"`, pinned Horizon `0a875da91dbb0fdcb7ba8c42c11341aa229af51a`, mixins `e59da9094f0c2fdda6c627fe9eff22dec6a906f0`).
+
+### Decisions applied (§3 defaults)
+
+1. Replaced 1.78.0 content with 1.120.1 (26.3) content; asset license is CC-BY-4.0 (code MIT), with `LICENSES/`, `THIRD_PARTY_NOTICES.md`, and updated `LICENSE-NOTICE.md`. `REUSE.toml` is omitted from the package root because `horizon-mod-package` rejects extra root `.toml` files.
+2. Replaced `src/runtime.rs` and `src/support.rs` with data-driven reload-stable recipes (`src/recipes.rs`) and the full modular SDK implementation; updated `AGENTS.md`.
+3. Removed obsolete 1.78.0 jar generator scripts (`assemble_content.py`, `gen_recipes.py`, `gen_tag_members.py`, `recipes.json`, `tag_members.json`, `dialect-proof.json`).
+4. Package version bumped to `0.3.0`; machines use the full 1.120.1 declarations (`half=lower|upper`, etc.).
+5. Rebuilt deterministic `theurgy.hmod` and updated `RECEIPT.md`.
+
+### Transfer map of all 29 source glue files
+
+| Source file (`theurgy-horizon/native/theurgy/`) | Target in `theurgy` | Status |
+|---|---|---|
+| `book.rs` | `src/book.rs` | Ported (compiles, unit tests pass, not verified in-game) |
+| `bootstrap.rs` | `src/lib.rs` + `horizon-mod.toml` | Replaced by `#[mod_api::horizon_mod]` |
+| `client.rs` | `src/client.rs` | Ported with typed payloads, key mappings, HUD layer, `BookCanvas` |
+| `config.rs` | `src/config.rs` | Ported |
+| `filter.rs` | `src/filter.rs` | Ported (command + server payload handler + filter engine) |
+| `filter_client.rs` | `src/filter_client.rs` | Ported over `DrawContext` + typed `FilterEditPayload` |
+| `filtered_fluid_transfer.rs` | `src/logistics.rs` + `src/filter.rs` | Replaced by `mod_api::FLUIDS` + `move_resources` |
+| `filtered_transfer.rs` | `src/logistics.rs` + `src/filter.rs` | Replaced by `mod_api::ITEMS` + `move_resources` |
+| `fluids.rs` | `src/fluids.rs` + `data/theurgy/horizon/fluid/sal_ammoniac.json` | Ported; world fluid uses native SDK world-fluid simulation |
+| `flux.rs` | `src/flux.rs` | Ported (+ `block_energy` FE buffer on `mercury_flux_emitter`) |
+| `heat.rs` | `src/heat.rs` | Ported |
+| `host.rs` | `src/host.rs` | Ported + shared SDK helpers |
+| `incubation.rs` | `src/incubation.rs` | Ported with transactional vessel consumption |
+| `interactions.rs` | `src/interactions.rs` | Ported on `BlockPart::use_item_on` / `use_without_item` + `fluid_util` |
+| `items.rs` | `src/items.rs` | Ported on `ItemPart` + `BlockPart` + hooks |
+| `logistics.rs` | `src/logistics.rs` | Ported with live node index + transactional `ITEMS`/`FLUIDS` transfers |
+| `machines.rs` | `src/machines.rs` | Ported with reload-stable recipe cache + vat signal cache |
+| `model_data.rs` | `src/model_data.rs` | Ported verbatim (`.rs` packed in `.hmod`) |
+| `portal.rs` | `src/render.rs` (fallback) | Gap — see §8 table below |
+| `probe.rs` | `src/probe.rs` | Ported (`theurgy_probe`, `theurgy_state`) |
+| `recipe_client.rs` | `src/recipe_client.rs` | Ported over `DrawContext` + `ClientHost::recipes_of_type` |
+| `reformation.rs` | `src/reformation.rs` | Ported with transactional pedestal commits |
+| `registry.rs` | `src/registry.rs` | Ported on `Registrar` + `TheurgyBlockPart` (29 BEs, 30 components) |
+| `render.rs` | `src/render.rs` | Ported on `BlockEntityPart::block_entity_submit` / `bounds` / `update_tag` |
+| `sal_fluid.rs` | `data/theurgy/horizon/fluid/sal_ammoniac.json` + `Hooks::register_fluid_models` | Replaced by native SDK fluid models (zero mesher mixin) |
+| `selection.rs` | `src/selection.rs` | Ported |
+| `special_attributes.rs` | `src/filter.rs` | Folded into `AttributeRule` (all 4 rules) |
+| `standard_attributes.rs` | `src/filter.rs` | Folded into `StandardKind` (all 14 rules) |
+| `worldgen.rs` | `data/theurgy/worldgen/{feature,placed_feature}/sal_ammoniac_ore.json` + `declare_biome_modifier` | Replaced by native 26.3 data-driven ore generation |
+
+Plus pure engine core: `native/theurgy/engine/src/*.rs` → `src/engine/{mod,crafting,machines,recipes,wire,performance}.rs` (all 30 engine tests pass unchanged).
+
+### Deviations from `theurgy-horizon` (`fdc87ae`)
+
+- **Worldgen placement**: `sal_ammoniac_ore` now uses Horizon's native 26.3 `minecraft:ore` feature + `placed_feature` + `declare_biome_modifier` instead of a manual `chunk_load` RNG implementation. Exact block coordinates at seed 0 may differ from `scenarios/worldgen.mjs`'s hardcoded 17/17 Java positions depending on Horizon's feature sorter index; verify in-game once a launcher build is available.
+- **Sal ammoniac world fluid**: Declared via `data/theurgy/horizon/fluid/sal_ammoniac.json` + `Hooks::register_fluid_models` instead of a water-template block + `block_spread`/`block_changed` water-conversion hack + `Mesher::mesh_reusing` mixin. The flowing fluid registry id is `theurgy:flowing_sal_ammoniac` (Horizon's `FluidLook::flowing_id` convention), added to `data/theurgy/tags/fluid/sal_ammoniac.json`.
+- **Filter UI & wand mode networking**: Client edits and wand mode changes use typed `PayloadCodec` C2S payloads (`theurgy:filter_edit`, `theurgy:wand_mode`) instead of chat command injection or direct client inventory writes.
+- **Reformation trail client check**: On the client, `draw_reformation` draws trails for all selected `sourcePedestals` while the emitter is processing rather than inspecting each source pedestal's client block entity map directly.
+- **`can_survive` / `update_shape` sturdy check**: `LevelHost` exposes block state at neighbor positions without a direct `is_face_sturdy(state, dir)` helper, so attachment survival treats any non-air support block as sturdy.
+
+### Gaps (§8)
+
+| Подсистема | Чего нет в API | Что сделано взамен | Hook request (да/нет) |
+|---|---|---|---|
+| `portal.rs` (`logistics_nexus` Portal bone) | `BlockEntityDrawContext` не имеет метода для `END_PORTAL_LAYER` (`rendertype_end_portal`) квадов | На грани кости `Portal` рисуется тёмный квад `block/obsidian` с тинтом `0x201040` (`src/render.rs`) | да (опциональный `BlockEntityDrawContext::end_portal_quad`) |
+| `items.rs` (`can_survive` / `update_shape`) | `LevelHost` не имеет `is_face_sturdy(state, dir)` (есть только на `LevelRef` с `Host`) | Для emitter-блоков любая не-воздушная опора считается прочной; для коннекторов правило совпадает с Java | нет (не критично) |
+| `book.rs` (`scale_since` для текста) | `DrawContext` / `GuiDraw` не имеет произвольной 2D-матрицы масштабирования для произвольных `DrawContext` вызовов | Позиции и размеры спрайтов/предметов/заливок масштабируются в `BookCanvas::scale_since`; текст сохраняет масштабированную позицию | нет (косметично) |
+| Проверка в игре / lint-утилиты | В окружении отсутствуют `horizon-launcher` (`native-build`), `cargo-clippy`, `rustfmt` | Проверено `RUSTFLAGS="-D warnings" cargo test --all-targets --offline`, `cargo horizon-mod build/check/fits` (дважды, `cmp` идентичен) | нет (ограничение локального окружения) |
+
+### Verification status (0.3.0)
+
+| Check | Result | Notes |
+|---|---|---|
+| `RUSTFLAGS="-D warnings" cargo test --all-targets --offline` | **112 passed**, 0 failed, 0 warnings | Pure engine (30) + all subsystem unit tests (82) |
+| `rm -f Cargo.lock && cargo horizon-mod build` (twice) | **5,605,522 B**, SHA-256 `d6646f09a13f…49764`, `cmp` identical | Deterministic build |
+| `cargo horizon-mod check ./theurgy.hmod` | **exit 0** | `theurgy 0.3.0 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)` |
+| `cargo horizon-mod fits ./theurgy.hmod --build 0a875da` | **exit 0** | `0a875da  made for` |
+| Static audit (`native_*`, `todo!`, `unimplemented!`, forbidden dirs) | **0 matches** | Clean SDK layout, 0 mixins |
+| `cargo clippy` / `cargo fmt --check` | **not run** | Binaries not shipped in bundled launcher Rust 1.99.1 |
+| In-game verification (`horizon-launcher native-build`) | **not verified in-game** | `horizon-launcher` not found in environment; all steps are compiled + unit-tested only |
+

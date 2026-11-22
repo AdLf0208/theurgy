@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use mod_api::serde_json;
 use mod_api::text::TextStyle;
 use mod_api::{
-    ClientHost, Corner, DrawContext, Flow, GuiDraw, GuiLayer, GuiLayerDrawEvent,
-    GuiLayerPlacement, Hand, IPayloadContext, Identifier, InputKeyEvent, InteractionKey,
+    ClientHost, DrawContext, Flow, GuiDraw, GuiLayer, GuiLayerDrawEvent, GuiLayerPlacement, Hand,
+    HudMode, IPayloadContext, Identifier, InputKeyEvent, InteractionKey,
     InteractionKeyMappingTriggeredEvent, ItemDecorationsEvent, ItemStack, KeyAction,
     KeyRegistration, MouseScrollingEvent, PayloadCodec, PayloadId, PayloadWork,
     RegisterGuiLayersEvent, Registrar, ScreenCharTypedPreEvent, ScreenKeyPressedPreEvent,
@@ -738,7 +738,7 @@ pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'
         return;
     }
     let settings = config::get();
-    if !settings.enable_item_hud || !host_ref.native_corner_shown(Corner::TopLeft) {
+    if !settings.enable_item_hud || host_ref.hud_mode() != HudMode::AllVisible {
         return;
     }
     let mut lines = Vec::new();
