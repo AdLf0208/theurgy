@@ -1,4 +1,12 @@
 {
   "template": "minecraft:diamond",
-  "components": {}
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_glimmering_dreamwood",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_glimmering_dreamwood.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
 }

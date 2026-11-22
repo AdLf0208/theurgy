@@ -485,7 +485,7 @@ pub fn key_pressed(host_ref: &dyn ClientHost, screen: &ScreenView<'_>, key: &str
         "key.keyboard.backspace" => {
             ui.input.pop();
         }
-        "key.keyboard.enter" | "key.keyboard.keypad_enter" => {
+        "key.keyboard.enter" | "key.keyboard.keypad.enter" => {
             if ui.input.split_once(' ').is_some() {
                 let action = ui.input.trim().to_owned();
                 queue(ui, "rule_add", action);

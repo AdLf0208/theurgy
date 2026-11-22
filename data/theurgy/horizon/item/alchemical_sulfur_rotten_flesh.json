@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:rotten_flesh"
+    "theurgy:source_item": "minecraft:rotten_flesh",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_rotten_flesh",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_rotten_flesh.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
   }
 }

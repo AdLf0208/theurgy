@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:ender_pearl"
+    "theurgy:source_item": "minecraft:ender_pearl",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_ender_pearl",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_ender_pearl.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
   }
 }

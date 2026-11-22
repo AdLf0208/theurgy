@@ -565,6 +565,31 @@ fn rich(s: &str, rgb: u32) -> Vec<Run> {
     styled(&spans, rgb, false)
 }
 
+/// Cuts a word wider than a whole line into pieces that fit (`avail` wide each), by character:
+/// a URL has no space to wrap at, and would otherwise run past the page's edge.
+fn cut_word(
+    word: &[(String, Fmt)],
+    avail: f32,
+    measure: &dyn Fn(&[(String, Fmt)]) -> f32,
+) -> Vec<Vec<(String, Fmt)>> {
+    let mut pieces: Vec<Vec<(String, Fmt)>> = Vec::new();
+    let mut current: Vec<(String, Fmt)> = Vec::new();
+    for (text, f) in word {
+        for ch in text.chars() {
+            let mut trial = current.clone();
+            push(&mut trial, &ch.to_string(), f);
+            if !current.is_empty() && measure(&trial) > avail {
+                pieces.push(std::mem::take(&mut current));
+                push(&mut current, &ch.to_string(), f);
+            } else {
+                current = trial;
+            }
+        }
+    }
+    pieces.push(current);
+    pieces
+}
+
 /// Word wrap of one block; continuation lines of list items are indented
 /// (MarkdownComponentRenderUtils.wrapComponents(width, width - 10)).
 fn wrap(c: &dyn Canvas, block: &Block, max: f32) -> Vec<(Vec<(String, Fmt)>, f32)> {
@@ -582,7 +607,29 @@ fn wrap(c: &dyn Canvas, block: &Block, max: f32) -> Vec<(Vec<(String, Fmt)>, f32
     let mut lines = Vec::new();
     let mut line: Vec<(String, Fmt)> = Vec::new();
     let mut indent = 0.0;
+    let measure = |runs: &[(String, Fmt)]| c.width(&styled(runs, TEXT_RGB, true));
     for word in words {
+        if measure(&word) > max - indent {
+            if !line.is_empty() {
+                lines.push((std::mem::take(&mut line), indent));
+                if block.indent {
+                    indent = 10.0;
+                }
+            }
+            let pieces = cut_word(&word, max - indent, &measure);
+            let last = pieces.len() - 1;
+            for (n, piece) in pieces.into_iter().enumerate() {
+                if n < last {
+                    lines.push((piece, indent));
+                    if block.indent {
+                        indent = 10.0;
+                    }
+                } else {
+                    line = piece;
+                }
+            }
+            continue;
+        }
         let mut candidate = line.clone();
         if !candidate.is_empty() {
             let f = word.first().map(|w| w.1.clone()).unwrap_or_default();
@@ -591,7 +638,7 @@ fn wrap(c: &dyn Canvas, block: &Block, max: f32) -> Vec<(Vec<(String, Fmt)>, f32
         for (s, f) in &word {
             push(&mut candidate, s, f);
         }
-        if !line.is_empty() && c.width(&styled(&candidate, TEXT_RGB, true)) > max - indent {
+        if !line.is_empty() && measure(&candidate) > max - indent {
             lines.push((line, indent));
             if block.indent {
                 indent = 10.0;
@@ -1495,12 +1542,22 @@ fn draw_list(c: &mut dyn Canvas, ui: &BookUi, list: &List, w: f32, h: f32, mouse
 
 /// Parses `data/theurgy/hermetica.json` and shows the book. Reopening keeps
 /// the last category, entry, scroll and zoom (CategoryVisualState).
-pub fn open(bytes: &[u8]) -> bool {
+///
+/// `lookup` is the client's language for a translation key: the book's own English text is the
+/// fallback for a key the language doesn't have.
+pub fn open(bytes: &[u8], lookup: &dyn Fn(&str) -> Option<String>) -> bool {
     let Ok(json) = mod_api::serde_json::from_slice::<Value>(bytes) else { return false; };
     let list = |key: &str| json.get(key).and_then(Value::as_array).cloned().unwrap_or_default();
-    let translations = json.get("translations").and_then(Value::as_object).map(|t| {
+    let translations: HashMap<String, String> = json.get("translations").and_then(Value::as_object).map(|t| {
         t.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned()))).collect()
     }).unwrap_or_default();
+    let translations = translations
+        .into_iter()
+        .map(|(key, english)| {
+            let text = lookup(&key).unwrap_or(english);
+            (key, text)
+        })
+        .collect();
     let research = json.get("research").and_then(Value::as_object).map(|r| {
         r.iter().map(|(node, entries)| {
             (node.clone(), entries.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect())
@@ -1812,6 +1869,9 @@ pub fn key(key: &str) -> bool {
         match key {
             "key.keyboard.left" if ui.entry.is_some() || ui.list.is_some() => flip(ui, true),
             "key.keyboard.right" if ui.entry.is_some() || ui.list.is_some() => flip(ui, false),
+            // BookPaginatedScreen.back: Esc in an entry goes to the last page that linked here, else to
+            // its category. Only Esc out of the book itself closes it.
+            "key.keyboard.escape" if ui.list.is_none() && ui.entry.is_some() => back(ui),
             _ => {
                 let Some(list) = &mut ui.list else { return false; };
                 let searching = list.kind == ListKind::Search;
@@ -1944,5 +2004,21 @@ mod tests {
         let q = Progress::parse(&p.to_json()).unwrap();
         assert_eq!((q.read.len(), q.viewed.len(), q.bookmarks, q.unlocked), (1, 2, vec![("b".to_owned(), 2)], vec!["a".to_owned(), "b".to_owned()]));
         assert!(Progress::parse(b"{}").is_some_and(|p| p.read.is_empty()));
+    }
+
+    #[test]
+    fn a_word_wider_than_the_line_is_cut_into_pieces_that_fit() {
+        let measure = |runs: &[(String, Fmt)]| {
+            runs.iter().map(|(s, _)| s.chars().count() as f32 * 6.0).sum::<f32>()
+        };
+        let word = vec![("https://discord.gg/theurgy-alchemists".to_owned(), Fmt::default())];
+        let pieces = cut_word(&word, 60.0, &measure);
+        assert!(pieces.len() > 1);
+        assert!(pieces.iter().all(|piece| measure(piece) <= 60.0));
+        let joined: String = pieces.iter().flatten().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(joined, "https://discord.gg/theurgy-alchemists");
+        // A word that fits is one piece, untouched.
+        let short = vec![("Theurgy".to_owned(), Fmt::default())];
+        assert_eq!(cut_word(&short, 60.0, &measure).len(), 1);
     }
 }

@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_tag": "c:gems/diamond"
+    "theurgy:source_tag": "c:gems/diamond",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_diamond",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_diamond.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.precious"}
+      ]
+    }
   }
 }

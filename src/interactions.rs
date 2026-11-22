@@ -8,18 +8,28 @@
 //! - holding a valid input inserts into the input slot(s),
 //! - an empty hand takes output first, then inputs.
 
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 use mod_api::{
-    Hand, Host, HostTransaction, InteractionResult, ItemStack, LevelRef, ServerHost, Text,
-    UseItemOnEvent, UseWithoutItemEvent, fluid_util,
+    Hand, Host, HostTransaction, InteractionResult, ItemStack, LevelRef, RightClickBlockEvent,
+    ServerHost, Text, TriState, UseItemOnEvent, UseWithoutItemEvent, fluid_util,
 };
 
-use crate::{host, machines, recipes, registry};
+use crate::{fluids, host, machines, recipes, registry, selection};
 
-/// Guard against a programmatic click delivering both insert and empty-hand take
-/// within the same game tick.
-static LAST_INSERT_TICK: AtomicI64 = AtomicI64::new(i64::MIN);
+/// The game tick of each player's last insert. Guards a programmatic click delivering both the
+/// insert and an empty-hand take within one tick, per player: another player's insert never
+/// blocks this one's take.
+static LAST_INSERT_TICK: Mutex<Option<HashMap<u128, i64>>> = Mutex::new(None);
+
+/// Buckets that the fluid transfer of an apparatus takes in hand.
+const FLUID_BUCKETS: [&str; 4] = [
+    "minecraft:bucket",
+    "minecraft:water_bucket",
+    "minecraft:lava_bucket",
+    fluids::BUCKET_ITEM,
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Interaction {
@@ -135,8 +145,55 @@ fn vat_message(host_ref: &mut dyn ServerHost, player_id: u128, block: &str, suff
     }
 }
 
-fn remember_insert(host_ref: &dyn Host, level: LevelRef) {
-    LAST_INSERT_TICK.store(level.game_time(host_ref).unwrap_or(0), Ordering::Relaxed);
+fn remember_insert(host_ref: &dyn Host, level: LevelRef, player_id: u128) {
+    let tick = level.game_time(host_ref).unwrap_or(0);
+    if let Ok(mut ticks) = LAST_INSERT_TICK.lock() {
+        ticks.get_or_insert_with(HashMap::new).insert(player_id, tick);
+    }
+}
+
+fn inserted_this_tick(host_ref: &dyn Host, level: LevelRef, player_id: u128) -> bool {
+    let tick = level.game_time(host_ref).unwrap_or(0);
+    LAST_INSERT_TICK
+        .lock()
+        .ok()
+        .and_then(|ticks| ticks.as_ref().and_then(|map| map.get(&player_id).copied()))
+        == Some(tick)
+}
+
+/// `RightClickBlock` on the clicking client. The server answers a fluid bucket on an apparatus, or
+/// an emitter on a valid target, without placing anything; the client must not run the item's
+/// `useOn` for those clicks, or it predicts a placement the server never makes and the stack
+/// shrinks (or a fluid source appears) until the next inventory sync. The click still reaches the
+/// server.
+pub fn client_right_click(
+    host_ref: &dyn Host,
+    event: &mut RightClickBlockEvent<'_>,
+    sneaking: bool,
+) {
+    let click = event.click;
+    let Some(held) = click.stack else {
+        return;
+    };
+    let item = held.item().id(host_ref);
+    let answered = if FLUID_BUCKETS.contains(&item.as_str()) {
+        let Some(level) = host_ref.level(click.dimension.key().id()) else {
+            return;
+        };
+        resolve_entity_pos(host_ref, level, click.pos)
+            .is_some_and(|(_, block)| has_fluid_tank(&block))
+    } else if let Some(kind) = selection::emitter_id(&item) {
+        let Some(level) = host_ref.level(click.dimension.key().id()) else {
+            return;
+        };
+        resolve_entity_pos(host_ref, level, click.pos)
+            .is_some_and(|(_, block)| selection::target_accepts(kind, &block, sneaking))
+    } else {
+        false
+    };
+    if answered {
+        *event.use_item = TriState::False;
+    }
 }
 
 fn has_fluid_tank(block: &str) -> bool {
@@ -197,7 +254,7 @@ pub fn interact_with_item(
             side,
         ) {
             host_ref.block_entity_sync(entity_pos);
-            remember_insert(&*host_ref, level);
+            remember_insert(&*host_ref, level, player_id);
             return Some(InteractionResult::Success);
         }
     }
@@ -276,7 +333,7 @@ pub fn interact_with_item(
         });
         if placed.is_ok() {
             host_ref.block_entity_sync(entity_pos);
-            remember_insert(&*host_ref, level);
+            remember_insert(&*host_ref, level, player_id);
             return Some(InteractionResult::Success);
         }
     }
@@ -350,7 +407,7 @@ fn take_output_first(
     player_id: u128,
     kind: Interaction,
 ) -> Option<InteractionResult> {
-    if LAST_INSERT_TICK.load(Ordering::Relaxed) == level.game_time(&*host_ref).unwrap_or(0) {
+    if inserted_this_tick(&*host_ref, level, player_id) {
         return None;
     }
     let output_first: &[usize] = match kind {

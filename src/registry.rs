@@ -8,15 +8,17 @@ use mod_api::{
     AnalogOutputEvent, BiomeModifier, BiomeModifierOperation, BlockEntityEvent, BlockEntityPart,
     BlockEntityRenderBoundingBoxEvent, BlockEntitySubmitEvent, BlockEntityTickEvent,
     BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockSignalEvent, BlockState,
-    CanSurviveEvent, ClientHost, Compound, HasAnalogOutputEvent, Host, InteractionResult,
-    IsSignalSourceEvent, LevelHost, LevelSide, LevelTicksHost, ModContainer, ModEnergyBuffer,
-    ModFluidTanks, OnDestroyedByPlayerEvent, ParticleKey, Registrar, ServerHost,
-    StateForPlacementEvent, Tag, UpdateShapeEvent, UseItemOnEvent, UseWithoutItemEvent,
+    CanSurviveEvent, ClientHost, Compound, ExpDropEvent, FLUIDS, FluidResource,
+    HasAnalogOutputEvent,
+    Host, ITEM_FLUIDS, ITEMS, InteractionResult, IsSignalSourceEvent, LevelHost, LevelSide,
+    LevelTicksHost, ModContainer, ModEnergyBuffer, ModFluidTanks, OnDestroyedByPlayerEvent,
+    ParticleKey, Registrar, ResourceHandler, ServerHost, StateForPlacementEvent, Tag,
+    UpdateShapeEvent, UseItemOnEvent, UseWithoutItemEvent,
 };
 
 use crate::{
-    client, fluids, flux, heat, incubation, interactions, items, logistics, machines, recipes,
-    reformation, render,
+    client, fluids, flux, halves, heat, host, incubation, interactions, items, logistics, machines,
+    recipes, reformation, render,
 };
 
 /// All Theurgy blocks that carry a block entity, mirroring `BlockEntityRegistry`.
@@ -263,6 +265,16 @@ pub fn component_types(types: &mut Vec<String>) {
     }
 }
 
+/// The sal ammoniac ores' `exp_drop`: 2 to 5 experience, as upstream's `UniformInt.of(2, 5)`.
+pub struct OreExperience;
+
+#[mod_api::horizon_part]
+impl BlockPart for OreExperience {
+    fn exp_drop(&self, _: &dyn LevelHost, event: &mut ExpDropEvent<'_>) -> Option<i32> {
+        Some(items::ore_experience_for([event.pos.x, event.pos.y, event.pos.z]))
+    }
+}
+
 /// Shared Part attached once to every declared Theurgy block entity type.
 /// Because `BlockEntityPart: BlockPart`, this also handles all block hooks
 /// for those 29 blocks without attaching twice.
@@ -349,6 +361,15 @@ impl BlockEntityPart for TheurgyBlockPart {
     fn block_entity_tick(&self, host_ref: &mut dyn ServerHost, event: &mut BlockEntityTickEvent<'_>) {
         let id = event.entity.id().to_owned();
         let pos = event.pos;
+        // The upper half of a double-high apparatus neither works nor holds anything: its lower
+        // half does (`halves`).
+        if items::is_double_high(&id)
+            && host::level_in_place(host_ref).is_some_and(|level| {
+                level.block_property(&*host_ref, pos, "half").as_deref() == Some("upper")
+            })
+        {
+            return;
+        }
         match id.as_str() {
             "theurgy:calcination_oven"
             | "theurgy:distiller"
@@ -448,6 +469,32 @@ pub fn register(r: &mut dyn Registrar) {
             },
         },
     );
+
+    // Sal ammoniac: the bucket is a fluid container of its own, which the game's `ITEM_FLUIDS`
+    // answers only for vanilla buckets.
+    r.item_capability(&ITEM_FLUIDS, fluids::BUCKET_ITEM, |host, place| {
+        let fluid = host.fluid_key(fluids::SAL_AMMONIAC)?;
+        Some(
+            Box::new(fluids::SalAmmoniacBucket {
+                place: place.clone(),
+                fluid,
+            }) as Box<dyn ResourceHandler<FluidResource>>,
+        )
+    });
+
+    // A double-high apparatus's upper half answers items and fluids with the lower half's.
+    for full_id in items::DOUBLE_HIGH {
+        let block = r.block_key(full_id);
+        r.block_capability_before_game(&ITEMS, &block, halves::items_of_upper_half);
+        if fluids(full_id).is_some() {
+            r.block_capability_before_game(&FLUIDS, &block, halves::fluids_of_upper_half);
+        }
+    }
+
+    for ore in ["theurgy:sal_ammoniac_ore", "theurgy:deepslate_sal_ammoniac_ore"] {
+        let block = r.block_key(ore);
+        r.block_part(block, OreExperience);
+    }
 
     for &full_id in BLOCK_ENTITIES {
         let path = full_id.strip_prefix("theurgy:").unwrap_or(full_id);

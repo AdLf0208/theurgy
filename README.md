@@ -4,7 +4,7 @@ Full native Horizon SDK port (`api = "0.2"`, Minecraft 26.3, pinned Horizon `0a8
 
 - **Rust code (`src/`, manifests)**: MIT (`LICENSE`, `LICENSE-MIT`, `LICENSES/MIT.txt`).
 - **Upstream assets & data (`assets/`, `data/`)**: CC-BY-4.0 (`LICENSE-CC-BY-4.0`, `LICENSES/CC-BY-4.0.txt`), with third-party notices in [`LICENSE-NOTICE.md`](LICENSE-NOTICE.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
-- **Status**: compiles cleanly with `-D warnings` (0 warnings in both test and release builds), **112 unit tests passing**, **34/34 in-game scenarios passing** on Horizon `0a875da` (headless + Vulkan GPU GUI, including 3D render-reference silhouettes, Hermetica book, filter UI, wand, native sal ammoniac world fluid, worldgen, reformation, incubation chaos, logistics, filters, persistence, and `/theurgy` commands), and deterministic `cargo horizon-mod build` / `check` / `fits` passing. See [`notes.md`](notes.md) for the complete transfer map, bug fixes, and remaining API gap (`portal.rs`).
+- **Status**: compiles cleanly with `-D warnings` (0 warnings in both test and release builds), **118 unit tests passing**, **34/34 in-game scenarios passing** on Horizon `0a875da` (headless + Vulkan GPU GUI, including 3D render-reference silhouettes, Hermetica book, filter UI, wand, native sal ammoniac world fluid, worldgen, reformation, incubation chaos, logistics, filters, persistence, and `/theurgy` commands), and deterministic `cargo horizon-mod build` / `check` / `fits` passing. See [`notes.md`](notes.md) for the complete transfer map, bug fixes, and remaining API gap (`portal.rs`).
 
 ## What is ported
 

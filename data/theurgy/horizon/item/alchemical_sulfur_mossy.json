@@ -1,4 +1,12 @@
 {
   "template": "minecraft:diamond",
-  "components": {}
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_mossy",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_mossy.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
 }

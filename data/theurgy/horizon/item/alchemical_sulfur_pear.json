@@ -1,4 +1,12 @@
 {
   "template": "minecraft:diamond",
-  "components": {}
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_pear",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_pear.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
 }

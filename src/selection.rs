@@ -78,6 +78,16 @@ pub fn mercury_target(block: &str) -> bool {
     )
 }
 
+/// Whether `block` is a target an emitter of `kind` selects on a click. A mercury emitter placed
+/// while sneaking is a block placement, not a selection.
+pub fn target_accepts(kind: Emitter, block: &str, sneaking: bool) -> bool {
+    match kind {
+        Emitter::Mercury => !sneaking && mercury_target(block),
+        Emitter::Caloric => heat_receiver(block),
+        Emitter::Sulfuric => pedestal(block).is_some(),
+    }
+}
+
 fn pedestal(block: &str) -> Option<&'static str> {
     match block {
         "theurgy:reformation_source_pedestal" => Some("SOURCE"),

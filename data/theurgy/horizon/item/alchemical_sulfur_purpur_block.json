@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:purpur_block"
+    "theurgy:source_item": "minecraft:purpur_block",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_purpur_block",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_purpur_block.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
   }
 }

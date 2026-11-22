@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:skeleton_skull"
+    "theurgy:source_item": "minecraft:skeleton_skull",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_skeleton_skull",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_skeleton_skull.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
   }
 }

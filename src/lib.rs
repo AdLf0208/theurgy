@@ -10,6 +10,7 @@ pub mod filter;
 pub mod filter_client;
 pub mod fluids;
 pub mod flux;
+pub mod halves;
 pub mod heat;
 pub mod host;
 pub mod incubation;
@@ -27,7 +28,8 @@ pub mod render;
 pub mod selection;
 
 use mod_api::{
-    self, BlockChangedEvent, ClientHost, ClientTickPostEvent, ComponentTypesEvent, EntityPlaceEvent,
+    self, BlockChangedEvent, ClientHost, ClientTickPostEvent, ComponentTypesEvent, LootDropsEvent,
+    EntityPlaceEvent,
     Flow, GuiLayerDrawEvent, Hooks, HostSide, InputKeyEvent, InteractionKeyMappingTriggeredEvent,
     ItemStack, LeftClickBlockEvent, LevelHost, LivingEntityUseItemFinishEvent, MouseScrollingEvent,
     PlayerLoadFromFileEvent, PlayerLoggedInEvent, PlayerSaveToFileEvent, PrepareItemCraftEvent,
@@ -129,14 +131,24 @@ impl Hooks for Mod {
         host: HostSide<'_>,
         event: &mut RightClickBlockEvent<'_>,
     ) -> Flow {
-        if let HostSide::Server(host) = host {
-            if matches!(items::right_click_block(host, event), Flow::Cancel) {
-                return Flow::Cancel;
+        match host {
+            HostSide::Server(host) => {
+                if matches!(items::right_click_block(host, event), Flow::Cancel) {
+                    return Flow::Cancel;
+                }
+                selection::right_click_block(host, event)
             }
-            selection::right_click_block(host, event)
-        } else {
-            Flow::Continue
+            HostSide::Client(host) => {
+                let sneaking = host.is_key_down("key.keyboard.left.shift")
+                    || host.is_key_down("key.keyboard.right.shift");
+                interactions::client_right_click(&*host, event, sneaking);
+                Flow::Continue
+            }
         }
+    }
+
+    fn loot_drops(&self, host: &mut dyn ServerHost, event: &mut LootDropsEvent<'_>) {
+        items::loot_drops(host, event);
     }
 
     fn left_click_block(

@@ -4,7 +4,7 @@
   "key": {
     "G": "#c:glass_blocks",
     "R": "#c:rods/wooden",
-    "S": "theurgy:alchemical_sulfur_cobblestone_mossy"
+    "S": "theurgy:alchemical_sulfur_mossy"
   },
   "pattern": [
     " GS",
@@ -19,7 +19,7 @@
       "theurgy:divination_settings_max_damage": 16,
       "theurgy:divination_settings_range": 96,
       "theurgy:divination_settings_tier": "stone",
-      "theurgy:divination_linked_tag": "c:cobblestones_infested"
+      "theurgy:divination_linked_tag": "c:cobblestones_mossy"
     },
     "id": "theurgy:sulfur_attuned_divination_rod_abundant"
   }

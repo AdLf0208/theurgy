@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:bone"
+    "theurgy:source_item": "minecraft:bone",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_bone",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_bone.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
   }
 }

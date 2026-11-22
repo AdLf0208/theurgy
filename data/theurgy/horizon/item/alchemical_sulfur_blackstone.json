@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:blackstone"
+    "theurgy:source_item": "minecraft:blackstone",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_blackstone",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_blackstone.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
   }
 }

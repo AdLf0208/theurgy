@@ -925,7 +925,9 @@ fn transfer_fluids_filtered(
 // Block entity tick & probe helpers
 // ---------------------------------------------------------------------------
 
-fn sync_nexus_connections(host_ref: &mut dyn ServerHost, level: LevelRef, pos: Pos) {
+/// The nexus's six connection properties follow its neighbours (any non-air block). Run on
+/// placement, so a fresh nexus is connected before its first tick, and every tick after.
+pub fn sync_nexus_connections(host_ref: &mut dyn ServerHost, level: LevelRef, pos: Pos) {
     for (property, offset) in [
         ("up", [0, 1, 0]),
         ("down", [0, -1, 0]),

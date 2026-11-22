@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:nether_wart"
+    "theurgy:source_item": "minecraft:nether_wart",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_nether_wart",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_nether_wart.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
   }
 }

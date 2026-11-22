@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:muddy_mangrove_roots"
+    "theurgy:source_item": "minecraft:muddy_mangrove_roots",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_muddy_mangrove_roots",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_muddy_mangrove_roots.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
   }
 }

@@ -4,7 +4,7 @@
   "key": {
     "G": "#c:glass_blocks",
     "R": "#c:rods/wooden",
-    "S": "theurgy:alchemical_sulfur_sand"
+    "S": "theurgy:alchemical_sulfur_colorless"
   },
   "pattern": [
     " GS",

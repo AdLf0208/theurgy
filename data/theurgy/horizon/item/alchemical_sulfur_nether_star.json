@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:nether_star"
+    "theurgy:source_item": "minecraft:nether_star",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_nether_star",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_nether_star.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.precious"}
+      ]
+    }
   }
 }

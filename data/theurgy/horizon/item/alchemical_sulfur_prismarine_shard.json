@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:prismarine_shard"
+    "theurgy:source_item": "minecraft:prismarine_shard",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_prismarine_shard",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_prismarine_shard.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
   }
 }

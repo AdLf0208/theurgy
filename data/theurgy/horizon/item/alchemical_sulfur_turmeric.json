@@ -1,4 +1,12 @@
 {
   "template": "minecraft:diamond",
-  "components": {}
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_turmeric",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_turmeric.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
 }

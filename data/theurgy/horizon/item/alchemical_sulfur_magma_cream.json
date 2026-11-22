@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:magma_cream"
+    "theurgy:source_item": "minecraft:magma_cream",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_magma_cream",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_magma_cream.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
   }
 }

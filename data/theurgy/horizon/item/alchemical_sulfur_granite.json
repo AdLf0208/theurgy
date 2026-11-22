@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:granite"
+    "theurgy:source_item": "minecraft:granite",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_granite",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_granite.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
   }
 }

@@ -207,21 +207,19 @@ pub fn register_payloads(r: &mut dyn Registrar) {
     let _ = FILTER_TO_SERVER.set(filter_c2s);
 }
 
+/// The keybinding category's translation key (`key.category.theurgy.keybindings` in the lang).
+const KEY_CATEGORY: &str = "key.category.theurgy.keybindings";
+
 pub fn register_keys(r: &mut dyn Registrar) {
     let mut mode = KeyRegistration::new("change_item_mode", "");
     mode.label = "key.theurgy.change_item_mode".to_owned();
-    mode.category = "key.categories.theurgy".to_owned();
+    mode.category = KEY_CATEGORY.to_owned();
     r.register_key_mapping(mode);
 
     let mut fit = KeyRegistration::new("show_held_stack_fit_outline", "");
     fit.label = "key.theurgy.show_held_stack_fit_outline".to_owned();
-    fit.category = "key.categories.theurgy".to_owned();
+    fit.category = KEY_CATEGORY.to_owned();
     r.register_key_mapping(fit);
-
-    let mut recipes_key = KeyRegistration::new("open_recipes", "key.keyboard.r");
-    recipes_key.label = "Open Theurgy Recipes".to_owned();
-    recipes_key.category = "key.categories.theurgy".to_owned();
-    r.register_key_mapping(recipes_key);
 }
 
 pub fn register_gui_layers(event: &mut RegisterGuiLayersEvent<'_>) {
@@ -509,7 +507,7 @@ impl book::Canvas for BookCanvas<'_> {
 pub fn open_book(host_ref: &mut dyn ClientHost) -> bool {
     recipe_client::close();
     filter_client::close();
-    if !book::open(HERMETICA_JSON) {
+    if !book::open(HERMETICA_JSON, &|key| host_ref.translate(key)) {
         return false;
     }
     host_ref.mod_screen_open("theurgy");
@@ -722,11 +720,6 @@ pub fn input_key(host_ref: &mut dyn ClientHost, event: &mut InputKeyEvent<'_>) {
             queue_local_action(LocalAction::WandMode(1));
         }
     }
-    if host_ref.consume_click("theurgy", "open_recipes") {
-        book::close();
-        filter_client::close();
-        recipe_client::open(host_ref);
-    }
 }
 
 pub fn mouse_scrolling(
@@ -833,6 +826,43 @@ pub fn item_decorations(host_ref: &dyn ClientHost, event: &mut ItemDecorationsEv
     }
 }
 
+/// A translated line of the HUD, or `fallback` when the language has no such key.
+fn hud_text(host_ref: &dyn ClientHost, key: &str, fallback: &str) -> String {
+    host_ref.translate(key).unwrap_or_else(|| fallback.to_owned())
+}
+
+/// Fills the `%s` holes of a translated template, in order.
+fn hud_fill(template: &str, values: &[String]) -> String {
+    let mut out = template.to_owned();
+    for value in values {
+        out = out.replacen("%s", value, 1);
+    }
+    out
+}
+
+/// A block's display name as the language has it (`block.<namespace>.<path>`).
+fn block_display_name(host_ref: &dyn ClientHost, block: &str) -> String {
+    match block.split_once(':') {
+        Some((namespace, path)) => hud_text(host_ref, &format!("block.{namespace}.{path}"), block),
+        None => block.to_owned(),
+    }
+}
+
+/// The mercurial wand's current mode, named as its action bar names it, with its English name.
+fn wand_mode_name(host_ref: &dyn ClientHost, mode: i32) -> String {
+    let (key, english) = match mode {
+        0 => ("item.mode.theurgy.mercurial_wand.rotate_selected_direction", "Cycle selected direction"),
+        1 => ("item.mode.theurgy.mercurial_wand.switch_logistics_enabled", "Enable/Disable"),
+        2 => ("item.mode.theurgy.mercurial_wand.select_frequency", "Select frequency"),
+        3 => ("item.mode.theurgy.mercurial_wand.set_selected_frequency", "Set selected frequency"),
+        4 => ("item.mode.theurgy.mercurial_wand.cycle_capacitor_side", "Cycle capacitor side"),
+        _ => return "Unknown mode".to_owned(),
+    };
+    hud_text(host_ref, key, english)
+}
+
+/// The HUD's line for the block under the crosshair: its name and progress, flux and tank, and the
+/// stacks it holds, in the top centre of the screen.
 pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'_>) {
     if event.layer != HUD_LAYER_ID {
         return;
@@ -841,42 +871,45 @@ pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'
     if !settings.enable_item_hud || host_ref.hud_mode() != HudMode::AllVisible {
         return;
     }
-    let mut lines = Vec::new();
+    const NAME: u32 = 0xFFE7_D59A;
+    const LINE: u32 = 0xFFFF_FFFF;
+    let mut lines: Vec<(String, u32)> = Vec::new();
+    let mut stacks: Vec<ItemStack> = Vec::new();
     if let Some(stack) = local_hand_stack(host_ref, Hand::Main)
         && stack.item().id(host_ref) == items::MERCURIAL_WAND
     {
-        let mode_name = match items::wand_mode(host_ref, &stack) {
-            0 => "Cycle selected direction",
-            1 => "Enable/Disable",
-            2 => "Select frequency",
-            3 => "Set selected frequency",
-            4 => "Cycle capacitor side",
-            _ => "Unknown mode",
-        };
+        let mode = items::wand_mode(host_ref, &stack);
         let freq = items::component_i32(host_ref, &stack, items::SELECTED_FREQUENCY).unwrap_or(0);
-        lines.push(mode_name.to_owned());
-        lines.push(format!("Frequency: {freq}"));
+        let name = wand_mode_name(host_ref, mode);
+        lines.push((name, NAME));
+        let frequency = hud_text(host_ref, "theurgy.hud.frequency", "Frequency: %s");
+        lines.push((hud_fill(&frequency, &[freq.to_string()]), LINE));
     }
     if settings.enable_in_world_hud
         && let Some(hit) = host_ref.raycast(6.0)
     {
         let block = hit.block.id(host_ref);
         if block.starts_with("theurgy:") {
-            lines.push(block);
+            lines.push((block_display_name(host_ref, &block), NAME));
+            let pos = [hit.block_x, hit.block_y, hit.block_z];
             if let Some(player) = host_ref.local_player()
                 && let Some(level) = player.level(host_ref)
-                && let Some(be) =
-                    host_ref.block_entity(level, [hit.block_x, hit.block_y, hit.block_z])
+                && let Some(be) = host_ref.block_entity(level, pos)
                 && let Some(nbt) = be.data(host_ref)
             {
                 let progress = host::int(&nbt, "progress", 0);
                 let total = host::int(&nbt, "totalTime", 0);
                 if total > 0 {
-                    lines.push(format!("Progress: {progress} / {total}"));
+                    let template = hud_text(host_ref, "theurgy.hud.progress", "Progress: %s / %s");
+                    lines.push((
+                        hud_fill(&template, &[progress.to_string(), total.to_string()]),
+                        LINE,
+                    ));
                 }
                 if let Some(Tag::Compound(handler)) = nbt.get(&"mercuryFluxHandler".into()) {
                     let energy = host::int(handler, "energy", 0);
-                    lines.push(format!("Mercury flux: {energy}"));
+                    let template = hud_text(host_ref, "theurgy.hud.mercury_flux", "Mercury flux: %s");
+                    lines.push((hud_fill(&template, &[energy.to_string()]), LINE));
                 }
                 if let Some(Tag::List(fluids)) = nbt.get(&"fluids".into())
                     && let Some(Tag::Compound(tank)) = fluids.first()
@@ -884,7 +917,14 @@ pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'
                     let amount = host::int(tank, "Amount", 0);
                     if amount > 0 {
                         let fluid = host::string(tank, "Fluid").unwrap_or_else(|| "fluid".into());
-                        lines.push(format!("{fluid}: {amount} mB"));
+                        let template = hud_text(host_ref, "theurgy.hud.fluid", "%s: %s mB");
+                        let name = block_display_name(host_ref, &fluid);
+                        lines.push((hud_fill(&template, &[name, amount.to_string()]), LINE));
+                    }
+                }
+                for index in 0..4 {
+                    if let Ok(Some(stack)) = be.item_slot(host_ref, index) {
+                        stacks.push(stack);
                     }
                 }
             }
@@ -894,16 +934,48 @@ pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'
         return;
     }
     let scale = settings.hud_scale.clamp(0.25, 3.0);
-    let height = (7.0 + lines.len() as f32 * 10.0) * scale;
-    let width = 196.0 * scale;
-    let (x, y) = (6.0, 6.0);
-    event.draw.fill([x, y, width, height], 0x7800_0000);
-    for (index, line) in lines.iter().enumerate() {
+    let gui_width = event.draw.size()[0];
+    let char_width = 6.0 * scale;
+    let line_height = 10.0 * scale;
+    let stack_size = 16.0 * scale;
+    let stack_step = 18.0 * scale;
+    let pad = 3.0 * scale;
+    let top = 4.0 * scale;
+    let widest = lines
+        .iter()
+        .map(|(text, _)| text.chars().count() as f32 * char_width)
+        .fold(0.0_f32, f32::max);
+    let row_width = stacks.len() as f32 * stack_step;
+    let box_width = widest.max(row_width) + 2.0 * pad;
+    let text_height = lines.len() as f32 * line_height;
+    let row_height = if stacks.is_empty() { 0.0 } else { stack_step };
+    let box_height = text_height + row_height + 2.0 * pad;
+    let centre = gui_width / 2.0;
+    event.draw.fill(
+        [centre - box_width / 2.0, top, box_width, box_height],
+        0x7800_0000,
+    );
+    for (index, (text, colour)) in lines.iter().enumerate() {
+        let width = text.chars().count() as f32 * char_width;
         event.draw.text(
-            line,
-            [x + 4.0 * scale, y + 4.0 * scale + index as f32 * 10.0 * scale],
-            if index == 0 { 0xFFE7_D59A } else { 0xFFFF_FFFF },
+            text,
+            [
+                centre - width / 2.0,
+                top + pad + index as f32 * line_height,
+            ],
+            *colour,
             false,
+        );
+    }
+    let row_left = centre - row_width / 2.0;
+    for (index, stack) in stacks.iter().enumerate() {
+        event.draw.item_stack(
+            stack,
+            [
+                row_left + index as f32 * stack_step,
+                top + pad + text_height,
+            ],
+            stack_size,
         );
     }
 }

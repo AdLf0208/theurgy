@@ -154,14 +154,23 @@ pub fn tick(
     }
 }
 
-fn update_connections(host_ref: &mut dyn ServerHost, pos: [i32; 3], vessels: &Vessels) {
-    for (property, connected) in [
-        ("north", vessels.mercury.is_some()),
-        ("east", vessels.salt.is_some()),
-        ("south", vessels.sulfur.is_some()),
-        ("west", false),
-    ] {
-        host_ref.set_block_property_with(pos, property, if connected { "true" } else { "false" }, 3);
+/// The four horizontal connection properties, in `HORIZONTAL`'s order: a side is connected when a
+/// vessel of any kind stands on it. The connection follows the side, not the vessel's type.
+const CONNECTIONS: [&str; 4] = ["north", "east", "south", "west"];
+
+/// Writes the connection properties that changed. A property is only written when its value
+/// differs, so an idle incubator writes nothing per tick.
+fn update_connections(
+    host_ref: &mut dyn ServerHost,
+    level: LevelRef,
+    pos: [i32; 3],
+    connected: [bool; 4],
+) {
+    for (property, on) in CONNECTIONS.into_iter().zip(connected) {
+        let value = if on { "true" } else { "false" };
+        if level.block_property(&*host_ref, pos, property).as_deref() != Some(value) {
+            host_ref.set_block_property_with(pos, property, value, 3);
+        }
     }
 }
 
@@ -320,13 +329,15 @@ fn tick_incubator(
         entity.items.push(None);
     }
     let mut neighbours: Vec<(String, [i32; 3])> = Vec::new();
-    for at in horizontal_neighbours(pos) {
+    let mut sides = [false; 4];
+    for (side, at) in horizontal_neighbours(pos).into_iter().enumerate() {
         if let Some(id) = vessel_at(&*host_ref, level, at) {
+            sides[side] = true;
             neighbours.push((id, at));
         }
     }
     let vessels = classify_neighbours(neighbours.iter().map(|(id, at)| (id.as_str(), *at)));
-    update_connections(host_ref, pos, &vessels);
+    update_connections(host_ref, level, pos, sides);
 
     let mut state = host::crafting(&entity.nbt, &entity.data);
     let (Some(mercury), Some(salt), Some(sulfur)) = (vessels.mercury, vessels.salt, vessels.sulfur)

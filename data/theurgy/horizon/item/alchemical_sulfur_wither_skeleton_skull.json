@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:wither_skeleton_skull"
+    "theurgy:source_item": "minecraft:wither_skeleton_skull",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_wither_skeleton_skull",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_wither_skeleton_skull.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.rare"}
+      ]
+    }
   }
 }

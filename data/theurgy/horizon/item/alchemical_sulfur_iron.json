@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_tag": "c:ingots/iron"
+    "theurgy:source_tag": "c:ingots/iron",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_iron",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_iron.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
   }
 }

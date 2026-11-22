@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:grass_block"
+    "theurgy:source_item": "minecraft:grass_block",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_grass_block",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_grass_block.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
   }
 }

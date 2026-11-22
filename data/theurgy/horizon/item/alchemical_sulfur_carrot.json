@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:carrot"
+    "theurgy:source_item": "minecraft:carrot",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_carrot",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_carrot.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
   }
 }

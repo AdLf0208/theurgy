@@ -32,10 +32,10 @@ pub fn sized_ingredient(value: &Value) -> (&Value, u32) {
 
 pub fn ingredient_parts<'a>(kind: &str, json: &'a Value) -> Vec<(&'a Value, u32)> {
     match kind {
-        "theurgy:calcination" | "theurgy:distillation" => {
-            json.get("ingredient").map(sized_ingredient).into_iter().collect()
-        }
-        "theurgy:liquefaction" => json.get("ingredient").map(sized_ingredient).into_iter().collect(),
+        "theurgy:calcination"
+        | "theurgy:distillation"
+        | "theurgy:liquefaction"
+        | "theurgy:catalysation" => json.get("ingredient").map(sized_ingredient).into_iter().collect(),
         "theurgy:fermentation" | "theurgy:digestion" => json
             .get("ingredients").and_then(Value::as_array).into_iter().flatten()
             .map(sized_ingredient).collect(),
@@ -111,6 +111,14 @@ mod tests {
             Some(&Tank { fluid: Some("minecraft:water".into()), amount: 1000, capacity: 10000 }), |_, _| true).is_none());
         assert!(find_recipe("theurgy:liquefaction", &recipes, &items,
             Some(&Tank { fluid: Some("theurgy:sal_ammoniac".into()), amount: 9, capacity: 10000 }), |_, _| true).is_none());
+    }
+    #[test]
+    fn catalysation_ingredient_is_a_plain_item_id() {
+        let json = json!({"type":"theurgy:catalysation","ingredient":"theurgy:mercury_shard","totalMercuryFlux":800});
+        let parts = ingredient_parts("theurgy:catalysation", &json);
+        assert_eq!(parts.len(), 1);
+        assert_eq!(parts[0].0.as_str(), Some("theurgy:mercury_shard"));
+        assert_eq!(parts[0].1, 1);
     }
     #[test]
     fn full_or_wrong_output_never_overflows() {

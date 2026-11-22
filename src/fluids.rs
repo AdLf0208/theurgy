@@ -7,8 +7,9 @@
 
 use mod_api::serde_json::Value;
 use mod_api::{
-    Direction, FLUIDS, FluidModel, FluidResource, FluidStack, Host, HostTransaction, ItemStack,
-    LevelRef, ModBlockEntityView, RegisterFluidModelsEvent, ServerHost,
+    Direction, FLUIDS, FluidKey, FluidModel, FluidResource, FluidStack, Host, HostTransaction,
+    ItemPlace, ItemResource, ItemStack, LevelRef, ModBlockEntityView, RegisterFluidModelsEvent,
+    ResourceHandler, ServerHost, Transaction,
 };
 
 use crate::engine::recipes::Tank;
@@ -123,6 +124,107 @@ fn fill_below(
         host_ref.block_entity_sync(below);
     }
     ok
+}
+
+/// The sal ammoniac bucket: the item a sal ammoniac fluid travels in.
+pub const BUCKET_ITEM: &str = "theurgy:sal_ammoniac_bucket";
+const EMPTY_BUCKET: &str = "minecraft:bucket";
+const BUCKET: u32 = 1000;
+
+/// The sal ammoniac bucket as a fluid container (`ITEM_FLUIDS`): one tank of 1000 mB, filled and
+/// drained whole, an empty vanilla bucket taking sal ammoniac. The game answers `ITEM_FLUIDS`
+/// for vanilla buckets only, so without this provider a click with this bucket finds no fluid
+/// container and vanilla's bucket places the fluid in the world next to the block.
+pub struct SalAmmoniacBucket {
+    pub place: ItemPlace,
+    pub fluid: FluidKey,
+}
+
+impl SalAmmoniacBucket {
+    fn holds_item(&self, host: &mut dyn ServerHost, item: &str) -> bool {
+        self.place
+            .stack(host)
+            .is_some_and(|stack| stack.item().id(&*host) == item)
+    }
+
+    fn accepts(&self, resource: &FluidResource) -> bool {
+        !resource.to_stack(1).has_components() && resource.fluid().key() == Some(self.fluid)
+    }
+
+    /// Swaps the one bucket in the place for `item`, which the place's exchange splits off a
+    /// stack for. `BUCKET` when it goes through, else 0.
+    fn exchange(&self, host: &mut dyn ServerHost, tx: &Transaction, item: &str) -> u32 {
+        let Some(key) = crate::host::item_key(&*host, item) else {
+            return 0;
+        };
+        let bucket = ItemResource::of(&ItemStack::of(key));
+        match self.place.exchange(host, tx, &bucket, 1) {
+            1 => BUCKET,
+            _ => 0,
+        }
+    }
+}
+
+impl ResourceHandler<FluidResource> for SalAmmoniacBucket {
+    fn size(&self, _: &mut dyn ServerHost) -> usize {
+        1
+    }
+
+    fn resource(&self, host: &mut dyn ServerHost, index: usize) -> Option<FluidResource> {
+        (index == 0 && self.holds_item(host, BUCKET_ITEM))
+            .then(|| FluidResource::of(&FluidStack::new(self.fluid, 1)))
+    }
+
+    fn amount(&self, host: &mut dyn ServerHost, index: usize) -> u32 {
+        match self.resource(host, index) {
+            Some(_) => BUCKET,
+            None => 0,
+        }
+    }
+
+    fn capacity(&self, host: &mut dyn ServerHost, index: usize, resource: &FluidResource) -> u32 {
+        if index == 0 && self.accepts(resource) && self.holds_item(host, EMPTY_BUCKET) {
+            BUCKET
+        } else {
+            0
+        }
+    }
+
+    fn insert(
+        &self,
+        host: &mut dyn ServerHost,
+        tx: &Transaction,
+        index: usize,
+        resource: &FluidResource,
+        amount: u32,
+    ) -> u32 {
+        if index == 0
+            && amount >= BUCKET
+            && self.accepts(resource)
+            && self.holds_item(host, EMPTY_BUCKET)
+        {
+            self.exchange(host, tx, BUCKET_ITEM)
+        } else {
+            0
+        }
+    }
+
+    fn extract(
+        &self,
+        host: &mut dyn ServerHost,
+        tx: &Transaction,
+        index: usize,
+        resource: &FluidResource,
+        amount: u32,
+    ) -> u32 {
+        let held = self.resource(host, index);
+        match held {
+            Some(held) if held == *resource && amount >= BUCKET => {
+                self.exchange(host, tx, EMPTY_BUCKET)
+            }
+            _ => 0,
+        }
+    }
 }
 
 #[derive(Clone)]

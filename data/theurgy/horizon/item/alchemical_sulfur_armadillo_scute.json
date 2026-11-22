@@ -1,6 +1,13 @@
 {
   "template": "minecraft:diamond",
   "components": {
-    "theurgy:source_item": "minecraft:armadillo_scute"
+    "theurgy:source_item": "minecraft:armadillo_scute",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_armadillo_scute",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_armadillo_scute.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
   }
 }

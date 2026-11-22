@@ -8,13 +8,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mod_api::text::TextStyle;
 use mod_api::{
-    BlockFace, BlockState, BlockUpdateFlags, CanSurviveEvent, ClientHost, Compound, Direction,
-    Flow, Hand, Host, HostSide, HostTransaction, Identifier, InteractionResult, InventoryTickEvent,
+    BlockFace, BlockState, BlockUpdateFlags, CanSurviveEvent, ClientHost, Compound, Direction, Flow,
+    Hand, Host, HostSide, HostTransaction, Identifier, InteractionResult, InventoryTickEvent,
     ItemDecorationsEvent, ItemKey, ItemPart, ItemPlace, ItemStack, LevelHost, LevelRef,
-    LevelTicksHost, LivingEntityUseItemFinishEvent, OnBlockPlacedByEvent, OnDestroyedByPlayerEvent,
-    PrepareItemCraftEvent, ReleaseUsingEvent, RightClickBlockEvent, ServerHost, SoundSource,
-    StateForPlacementEvent, SupportType, Tag, Text, TooltipEvent, UpdateShapeEvent, UseAnimation,
-    UseAnimationEvent, UseDurationEvent, UseItemEvent, UseOnEvent,
+    LevelTicksHost, LivingEntityUseItemFinishEvent, LootDropsEvent, OnBlockPlacedByEvent,
+    OnDestroyedByPlayerEvent, PrepareItemCraftEvent, ReleaseUsingEvent, RightClickBlockEvent,
+    ServerHost, SoundSource, StateForPlacementEvent, SupportType, Tag, Text, TooltipEvent,
+    UpdateShapeEvent, UseAnimation, UseAnimationEvent, UseDurationEvent, UseItemEvent, UseOnEvent,
 };
 
 use crate::{client, config, host, logistics, selection};
@@ -356,7 +356,8 @@ pub fn state_for_placement(
             | "theurgy:sulfuric_flux_emitter"
     );
     if connector {
-        let requested = host::level_state_property(level, state, "facing");
+        // The block's default state says `facing=up`, which says nothing about the placement:
+        // a directional block points where the player clicked (`getClickedFace`).
         let mut facing = event.context.face;
         let hit = [
             event.context.hit_pos.x,
@@ -370,10 +371,8 @@ pub fn state_for_placement(
         {
             facing = opposite_direction(facing);
         }
-        let chosen = requested
-            .filter(|v| v != "north")
-            .unwrap_or_else(|| facing_name(facing).to_owned());
-        if let Some(next) = level.state_with_property(state, "facing", &chosen) {
+        let chosen = facing_name(facing);
+        if let Some(next) = level.state_with_property(state, "facing", chosen) {
             state = next;
         }
     } else if matches!(
@@ -467,6 +466,9 @@ pub fn update_shape(
         )?;
         return (next != event.state).then_some(next);
     }
+    if is_double_high(&block) {
+        return double_high_update_shape(level, event, &block);
+    }
     let facing = host::level_state_property(level, event.state, "facing")?;
     if facing != facing_name(opposite_direction(event.direction)) {
         return None;
@@ -481,6 +483,30 @@ pub fn update_shape(
         return level.block_state_id("minecraft:air");
     }
     None
+}
+
+/// The partner half a double-high apparatus needs (`DoorBlock.updateShape`): an upper half
+/// stands on its lower half and a lower half under its upper half. When the partner is gone
+/// by any means (a command, a piston, a player's break handled elsewhere), the half goes too.
+fn double_high_update_shape(
+    level: &mut dyn LevelTicksHost,
+    event: &UpdateShapeEvent,
+    block: &str,
+) -> Option<BlockState> {
+    let half = host::level_state_property(level, event.state, "half")?;
+    let partner_half = match (half.as_str(), event.direction) {
+        ("upper", Direction::Down) => "lower",
+        ("lower", Direction::Up) => "upper",
+        _ => return None,
+    };
+    let partner_ok = level.state_block(event.neighbour) == Some(block)
+        && host::level_state_property(level, event.neighbour, "half").as_deref()
+            == Some(partner_half);
+    if partner_ok {
+        None
+    } else {
+        level.block_state_id("minecraft:air")
+    }
 }
 
 pub fn can_survive(level: &dyn LevelHost, event: &mut CanSurviveEvent) -> Option<bool> {
@@ -643,6 +669,9 @@ pub fn on_block_placed_by(host_ref: &mut dyn ServerHost, event: &mut OnBlockPlac
         selection::placed(host_ref, level, uuid, &item_id, event.pos);
     }
     apply_block_item_components(host_ref, level, event.stack, event.pos);
+    if item_id == "theurgy:logistics_nexus" {
+        logistics::sync_nexus_connections(host_ref, level, event.pos);
+    }
     if !is_double_high(&item_id) {
         return;
     }
@@ -676,14 +705,20 @@ pub fn on_destroyed_by_player(
     };
     if host::block_id_at(&*host_ref, level, other).as_deref() == Some(block)
         && level.block_property(&*host_ref, other, "half").as_deref() == Some(expected)
-        && let Some(air) = host_ref.block_state_id("minecraft:air")
     {
-        let _ = level.set_block(
-            host_ref,
-            other,
-            air,
-            BlockUpdateFlags::NEIGHBORS | BlockUpdateFlags::CLIENTS,
-        );
+        if half == "upper" {
+            // The lower half is the apparatus: breaking it drops the apparatus and its
+            // contents, as breaking the lower half itself does. The upper half's own loot
+            // table only drops from the lower half's state, so nothing is dropped twice.
+            let _ = level.destroy_block(host_ref, other, true, None, false);
+        } else if let Some(air) = host_ref.block_state_id("minecraft:air") {
+            let _ = level.set_block(
+                host_ref,
+                other,
+                air,
+                BlockUpdateFlags::NEIGHBORS | BlockUpdateFlags::CLIENTS,
+            );
+        }
     }
     None
 }
@@ -841,6 +876,16 @@ fn translated_source_tag(host_ref: &dyn Host, source: &str) -> Option<String> {
     block_tag_nonempty(host_ref, &candidate).then_some(candidate)
 }
 
+/// `message.theurgy.divination_rod.*`: the action bar line that tells why a rod refused to
+/// attune (or that it did), naming the block.
+fn rod_message(host_ref: &mut dyn ServerHost, player_id: u128, key: &str, block: &str) {
+    let (namespace, path) = block.split_once(':').unwrap_or(("minecraft", block));
+    let name = Text::translate(format!("block.{namespace}.{path}"), Vec::new());
+    if let Some(player) = host_ref.player(player_id) {
+        let _ = player.action_bar(host_ref, Text::translate(key, vec![name]));
+    }
+}
+
 fn attune_rod(
     host_ref: &mut dyn ServerHost,
     stack: &ItemStack,
@@ -853,6 +898,12 @@ fn attune_rod(
         return None;
     }
     if !component_bool(&*host_ref, stack, "theurgy:divination_settings_allow_attuning") {
+        if let Some(player) = host_ref.player(player_id) {
+            let _ = player.action_bar(
+                host_ref,
+                Text::translate("message.theurgy.divination_rod.attuning_not_allowed", Vec::new()),
+            );
+        }
         return Some(InteractionResult::Success);
     }
     let level = player.level(&*host_ref)?;
@@ -864,6 +915,7 @@ fn attune_rod(
     let tier = component_string(&*host_ref, stack, DIVINATION_TIER)
         .unwrap_or_else(|| "stone".to_owned());
     if host::in_block_tag(&*host_ref, block_key, incorrect_blocks_tag(&tier)) {
+        rod_message(host_ref, player_id, "message.theurgy.divination_rod.tier_too_low", &block);
         return Some(InteractionResult::Success);
     }
     let allowed = component_string(&*host_ref, stack, "theurgy:divination_settings_allowed_blocks_tag");
@@ -873,12 +925,14 @@ fn attune_rod(
         && !tag.is_empty()
         && !host::in_block_tag(&*host_ref, block_key, tag)
     {
+        rod_message(host_ref, player_id, "message.theurgy.divination_rod.block_not_allowed", &block);
         return Some(InteractionResult::Success);
     }
     if let Some(tag) = disallowed.as_deref()
         && !tag.is_empty()
         && host::in_block_tag(&*host_ref, block_key, tag)
     {
+        rod_message(host_ref, player_id, "message.theurgy.divination_rod.block_disallowed", &block);
         return Some(InteractionResult::Success);
     }
     let linked = translated_source_block(&*host_ref, &block).unwrap_or(block);
@@ -889,6 +943,18 @@ fn attune_rod(
         DIVINATION_LINKED_BLOCK,
         Tag::String(linked.as_str().into()),
     );
+    rod_message(host_ref, player_id, "message.theurgy.divination_rod.linked", &linked);
+    if let Some(player) = host_ref.player(player_id) {
+        let at = player.entity().position(&*host_ref).unwrap_or([0.0; 3]);
+        let _ = level.play_sound(
+            host_ref,
+            "theurgy:tuning_fork",
+            at,
+            SoundSource::Players,
+            1.0,
+            1.0,
+        );
+    }
     Some(InteractionResult::Success)
 }
 
@@ -1750,6 +1816,80 @@ impl ItemPart for TheurgyItemPart {
     }
 }
 
+/// The item components a block entity's state is kept in, the inverse of
+/// `apply_block_item_components`: the flux stored by a capacitor or emitter, the nexus pairing and
+/// the catalyst's conversion, so a broken block drops with what it held.
+pub fn carried_components(nbt: &Compound) -> Vec<(&'static str, Tag)> {
+    let mut out = Vec::new();
+    if let Some(Tag::Compound(handler)) = nbt.get(&"mercuryFluxHandler".into()) {
+        out.push(("theurgy:mercury_flux_storage", Tag::Int(host::int(handler, "energy", 0))));
+    }
+    for (key, component) in [
+        ("mercuryFluxToConvert", "theurgy:mercury_flux_to_convert"),
+        ("currentMercuryFluxPerTick", "theurgy:current_mercury_flux_per_tick"),
+    ] {
+        if let Some(Tag::Int(value)) = nbt.get(&key.into()) {
+            out.push((component, Tag::Int(*value)));
+        }
+    }
+    if let Some(Tag::String(id)) = nbt.get(&"nexusId".into()) {
+        out.push(("theurgy:logistics_nexus_id", Tag::String(id.clone())));
+    }
+    out
+}
+
+/// `Hooks::loot_drops`: the item a broken apparatus drops keeps the state its block entity held.
+/// Only the drops of the block's own item are touched, and only for a block whose entity holds
+/// such state (the block entity is still there while the block's loot is rolled).
+pub fn loot_drops(host_ref: &mut dyn ServerHost, event: &mut LootDropsEvent<'_>) {
+    let Some((pos, _state)) = event.context.block else {
+        return;
+    };
+    let Some(level) = host_ref.level(event.context.dimension) else {
+        return;
+    };
+    let Some(block) = host::block_id_at(&*host_ref, level, pos) else {
+        return;
+    };
+    if !block.starts_with("theurgy:") {
+        return;
+    }
+    let Some(be) = host_ref.block_entity(level, pos) else {
+        return;
+    };
+    let Some(nbt) = be.data(&*host_ref) else {
+        return;
+    };
+    let carried = carried_components(&nbt);
+    if carried.is_empty() {
+        return;
+    }
+    for stack in event.drops.iter_mut() {
+        if stack.item().id(&*host_ref) != block {
+            continue;
+        }
+        for (id, value) in &carried {
+            set_stack_component(stack, id, value.clone());
+        }
+    }
+}
+
+static ORE_ROLLS: AtomicU64 = AtomicU64::new(0x2545_f491_4f6c_dd1d);
+
+/// The experience one ore block drops when it breaks, mixing a counter with the block's position.
+pub fn ore_experience_for(pos: [i32; 3]) -> i32 {
+    let counter = ORE_ROLLS.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed);
+    let mut z = counter ^ block_pos_long(pos) as u64;
+    z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+    ore_experience(z ^ (z >> 31))
+}
+
+/// `BlockPart::exp_drop` of the sal ammoniac ores: `UniformInt.of(2, 5)` experience.
+pub fn ore_experience(roll: u64) -> i32 {
+    2 + (roll % 4) as i32
+}
+
 pub fn bucket_remainder(item: &str) -> Option<&'static str> {
     (item == "theurgy:sal_ammoniac_bucket").then_some("minecraft:bucket")
 }
@@ -1852,5 +1992,58 @@ mod tests {
         );
         let shifted = tooltip_handler_lines("block.theurgy.oven", parts, true, true);
         assert_eq!(shifted.len(), 7);
+    }
+
+    #[test]
+    fn state_kept_by_a_block_entity_goes_back_into_its_item() {
+        let mut handler = Compound::new();
+        handler.insert("energy".into(), Tag::Int(20_560));
+        let mut nbt = Compound::new();
+        nbt.insert("mercuryFluxHandler".into(), Tag::Compound(handler));
+        nbt.insert("mercuryFluxToConvert".into(), Tag::Int(7));
+        nbt.insert("nexusId".into(), Tag::String("pair".into()));
+        let carried = carried_components(&nbt);
+        assert!(carried.contains(&("theurgy:mercury_flux_storage", Tag::Int(20_560))));
+        assert!(carried.contains(&("theurgy:mercury_flux_to_convert", Tag::Int(7))));
+        assert!(carried.contains(&("theurgy:logistics_nexus_id", Tag::String("pair".into()))));
+        assert_eq!(carried.len(), 3);
+        assert!(carried_components(&Compound::new()).is_empty());
+    }
+
+    #[test]
+    fn sal_ammoniac_ore_drops_two_to_five_experience() {
+        for roll in 0..64u64 {
+            let xp = ore_experience(roll);
+            assert!((2..=5).contains(&xp), "{roll}: {xp}");
+        }
+        assert!((0..256).map(|i| ore_experience_for([i, 64, -i])).all(|xp| (2..=5).contains(&xp)));
+    }
+
+    /// Every sulfur-attuned rod names a sulfur item the mod declares: an item model and a
+    /// data item both exist for it (the rods are crafted from them).
+    #[test]
+    fn sulfur_attuned_rods_only_use_declared_sulfur_items() {
+        let mut checked = 0;
+        for entry in std::fs::read_dir("data/theurgy/recipe/crafting/shaped").expect("recipes") {
+            let path = entry.expect("entry").path();
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_owned();
+            if !name.starts_with("sulfur_attuned_") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("recipe");
+            let sulfur = text
+                .split("\"S\": \"theurgy:")
+                .nth(1)
+                .and_then(|rest| rest.split('"').next())
+                .expect("sulfur ingredient");
+            let model = format!("assets/theurgy/items/{sulfur}.json");
+            let data = format!("data/theurgy/horizon/item/{sulfur}.json");
+            assert!(
+                std::path::Path::new(&model).exists() && std::path::Path::new(&data).exists(),
+                "{name} uses undeclared sulfur {sulfur}"
+            );
+            checked += 1;
+        }
+        assert_eq!(checked, 108);
     }
 }

@@ -8,6 +8,7 @@
     "requires_tool": false,
     "sounds": "minecraft:copper_block"
   },
+  "state_light": {"property": "lit", "values": {"true": 0}, "default": 0},
   "shapes": {
     "property": "half",
     "values": {
