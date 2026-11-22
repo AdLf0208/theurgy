@@ -8,11 +8,11 @@ use mod_api::{
     AnalogOutputEvent, BlockEntityEvent, BlockEntityPart, BlockEntityTickEvent,
     BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockSignalEvent, Compound,
     HasAnalogOutputEvent, Host, InteractionResult, IsSignalSourceEvent, LevelHost, LevelSide,
-    ModContainer, ModFluidTanks, ParticleKey, Registrar, ServerHost, Tag, UseItemOnEvent,
-    UseWithoutItemEvent,
+    ModContainer, ModEnergyBuffer, ModFluidTanks, ParticleKey, Registrar, ServerHost, Tag,
+    UseItemOnEvent, UseWithoutItemEvent,
 };
 
-use crate::{fluids, heat, interactions, machines, recipes};
+use crate::{fluids, flux, heat, incubation, interactions, machines, recipes, reformation};
 
 /// All Theurgy blocks that carry a block entity, mirroring `BlockEntityRegistry`.
 pub const BLOCK_ENTITIES: &[&str] = &[
@@ -317,6 +317,24 @@ impl BlockEntityPart for TheurgyBlockPart {
             "theurgy:sal_ammoniac_accumulator" | "theurgy:sal_ammoniac_tank" => {
                 fluids::tick(host_ref, &id, pos, &mut event.entity);
             }
+            "theurgy:incubator"
+            | "theurgy:incubator_mercury_vessel"
+            | "theurgy:incubator_salt_vessel"
+            | "theurgy:incubator_sulfur_vessel" => {
+                incubation::tick(host_ref, &id, pos, &mut event.entity);
+            }
+            "theurgy:sulfuric_flux_emitter"
+            | "theurgy:reformation_source_pedestal"
+            | "theurgy:reformation_target_pedestal"
+            | "theurgy:reformation_result_pedestal" => {
+                reformation::tick(host_ref, &id, pos, &mut event.entity);
+            }
+            "theurgy:mercury_catalyst"
+            | "theurgy:mercury_capacitor"
+            | "theurgy:caloric_flux_emitter"
+            | "theurgy:mercury_flux_emitter" => {
+                flux::tick(host_ref, &id, pos, &mut event.entity);
+            }
             _ => {}
         }
     }
@@ -349,6 +367,18 @@ pub fn register(r: &mut dyn Registrar) {
         }
         if let Some(f) = fluids(full_id) {
             r.block_fluids(&block, f);
+        }
+        if full_id == "theurgy:mercury_flux_emitter" {
+            r.block_energy(
+                &block,
+                ModEnergyBuffer {
+                    capacity: flux::MERCURY_EMITTER_CAPACITY,
+                    max_insert: flux::MERCURY_EMITTER_CAPACITY,
+                    max_extract: flux::MERCURY_EMITTER_CAPACITY,
+                    insert_faces: [true; 6],
+                    extract_faces: [true; 6],
+                },
+            );
         }
     }
 }

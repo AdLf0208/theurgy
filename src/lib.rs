@@ -5,17 +5,22 @@ pub mod commands;
 pub mod config;
 pub mod engine;
 pub mod fluids;
+pub mod flux;
 pub mod heat;
 pub mod host;
+pub mod incubation;
 pub mod interactions;
 pub mod machines;
 pub mod recipes;
+pub mod reformation;
 pub mod registry;
+pub mod selection;
 
 use mod_api::{
-    self, ComponentTypesEvent, Flow, Hooks, HostSide, RegisterCommandsEvent,
-    RegisterFluidModelsEvent, Registrar, RegistrationContext, RunModCommandEvent,
-    ServerAboutToStartEvent, ServerHost, ServerStoppedEvent, TagsUpdatedEvent,
+    self, ComponentTypesEvent, EntityPlaceEvent, Flow, Hooks, HostSide, LeftClickBlockEvent,
+    RegisterCommandsEvent, RegisterFluidModelsEvent, Registrar, RegistrationContext,
+    RightClickBlockEvent, RunModCommandEvent, ServerAboutToStartEvent, ServerHost,
+    ServerStoppedEvent, TagsUpdatedEvent,
 };
 
 #[derive(Default)]
@@ -42,6 +47,7 @@ impl Hooks for Mod {
     fn server_about_to_start(&self, _: &mut dyn ServerHost, _: &mut ServerAboutToStartEvent) {
         recipes::clear();
         machines::clear_signals();
+        selection::clear();
     }
 
     fn tags_updated(&self, host: HostSide<'_>, _: &mut TagsUpdatedEvent) {
@@ -53,6 +59,42 @@ impl Hooks for Mod {
     fn server_stopped(&self, _: &mut dyn ServerHost, _: &mut ServerStoppedEvent) {
         recipes::clear();
         machines::clear_signals();
+        selection::clear();
+    }
+
+    fn right_click_block(
+        &self,
+        host: HostSide<'_>,
+        event: &mut RightClickBlockEvent<'_>,
+    ) -> Flow {
+        if let HostSide::Server(host) = host {
+            selection::right_click_block(host, event)
+        } else {
+            Flow::Continue
+        }
+    }
+
+    fn left_click_block(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut LeftClickBlockEvent,
+    ) -> Flow {
+        selection::left_click_block(host, event)
+    }
+
+    fn entity_place(
+        &self,
+        host: &mut dyn ServerHost,
+        event: &mut EntityPlaceEvent,
+    ) -> Flow {
+        if let Some(placer) = event.placer
+            && let Some(uuid) = placer.uuid(host)
+            && let Some(level) = host::level_in_place(host)
+            && let Some(block_id) = host::block_id_at(&*host, level, [event.pos.x, event.pos.y, event.pos.z])
+        {
+            selection::placed(host, level, uuid, &block_id, [event.pos.x, event.pos.y, event.pos.z]);
+        }
+        Flow::Continue
     }
 
     fn register_commands(&self, _: &mut dyn ServerHost, event: &mut RegisterCommandsEvent<'_>) {
