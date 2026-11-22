@@ -15,6 +15,7 @@
 //! The numbers — the jar's 86 recipes, the oven's progress rule and the brazier's burn rule —
 //! live in [`runtime`], which holds no `mod_api` type and is unit-tested by `cargo test` alone.
 
+pub mod engine;
 pub mod runtime;
 pub mod support;
 
