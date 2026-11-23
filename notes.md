@@ -678,3 +678,44 @@ Plus pure engine core: `native/theurgy/engine/src/*.rs` → `src/engine/{mod,cra
 | `cargo clippy` / `cargo fmt --check` | **not run** | Binaries not shipped in bundled launcher Rust 1.99.1 |
 | Java NeoForge `differential-*.mjs` | **not run** | No separate live Java NeoForge server in environment |
 
+## Second bug list (2026-11-23)
+
+Upstream read for behaviour: `klikli-dev/theurgy` `release/v26.3-1.120.1` and
+`klikli-dev/code-defined-gui` `release/v26.3-1.14.0` (the library whose filter menus Theurgy opens).
+
+| # | Cause | Fix |
+|---|---|---|
+| 1 rod freeze | `scan_rod` read the whole 193^3 cube in `finish_using`, with a string id and a tag `Vec` built per block | `RodScan` (`items.rs`): targets resolved once to `BlockKey`s, only the columns inside the sphere and the level, `scan_columns_per_tick` columns per server tick from the use's start, the rest at the end (`ScanManager.finishScan`) |
+| 2 tank void | `interact_empty_hand` had no fluid branch, and returned early for a block with no item slots (the tank) | sneaking empty hand on a tank block that is not a vat: `fluids::void_tanks` |
+| 3 selection feedback | none was written | mode line, placement summary / out-of-range line on the action bar; outline boxes computed on the server (`block_shape` is server-only) and sent in `theurgy:selection`, drawn in `submit_custom_geometry`; pending points now also drop when the emitter leaves the hand or a block stops being a target (`selection::tick`) |
+| 4 wand messages | none was written | action bar line per mode; `ItemHUD` at the bottom left with current -> new; left click lowers the frequency (`theurgy:wand_frequency` for a click at nothing); the double step on a block is gone (the server click answers `Success`, and the client cancels its own item use) |
+| 5 filter GUI | placeholder screen | `filter_client.rs` rewritten after CodeDefinedGUI's screens; one `commit` action carries the draft; the inventory is read from the player's inventory menu (a client is not told `slot_backing`, so the 46-slot layout is used) |
+| 6 tool wear | the hook removed the partner half with a shape update, which removed the clicked half too, so the game's own removal found air | lower half: partner removed with `KNOWN_SHAPE`; upper half: answer `Some(true)` once the cascade removed it; the lower half drops only when the break harvests |
+| 7 trail | cubes textured with a GeckoLib atlas | motes as blended world quads (`render::draw_trails`) |
+| 8 floating items | drawn at full block size | removed (upstream draws none) |
+| 9 jar labels | a GUI-only decoration | special item model `theurgy:alchemical_derivative` (`derivative.rs`) |
+| 10 HUD | read the client's stale block entity copy | `hud.rs`: server snapshot on request every 5 ticks, upstream's lines |
+| 11 Hermetica | text column 120 wide against page art clear for about 116; spotlight title missing | `BODY_MARGIN` 10; spotlight pages titled with the item's name; the backdrop is one copy of its texture (no tiling, so no seam) |
+| 12 floor under the distiller | `distiller` and `calcination_oven` sit on the furnace template and did not declare `occludes: false`, so the floor's top face under them was culled | declared |
+
+Limits that stay:
+
+- **Item tags of the attribute filter.** The mod API has no "tags of this item" read, so the
+  reference item is tested against `data/theurgy/filter_item_tags.json` (vanilla's and this
+  package's 576 item tags). A tag only another mod declares is not offered.
+- **The filter screen is the mod's own screen, not a container menu.** Stacks are picked as
+  ghosts from the shown inventory; nothing is carried for real. The draft names inventory slots
+  and kept entries, never stacks, so the server builds the filter from its own data.
+- **A jar's source item is drawn with the plain model(s) its item definition names**, at the
+  label's place; a source drawn by code (a chest, a banner) shows the label without it, and a
+  block source shows unrotated (upstream draws it with its GUI transform).
+- **Holding Shift over a jar in a slot** draws the source item over the jar; upstream shows the
+  source alone (a special model renderer here answers once per stack, not per frame).
+- **Chat over the book** was not reproduced (see `RECEIPT.md`).
+
+Testing in the game without the launcher's CLI: `native/build.log` holds the exact `rustc` call
+of the `prebuilt-api` route. Staging the package with the launcher's generated
+`staged/theurgy/src/__horizon_entry.rs` (and the two lines it appends to `lib.rs`), compiling
+with that call, and replacing `horizon_theurgy.dll` plus `horizon-native-mods/theurgy/{assets,data}`
+in a copy of the installed `native-0a875da-*` version (and the library's sha256 in its
+`native-mods.json`) gives a game with the working tree in about 15 seconds.

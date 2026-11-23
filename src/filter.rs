@@ -109,6 +109,25 @@ pub enum StandardKind {
 }
 
 impl StandardKind {
+    /// Every standard attribute with its id, in `StandardAttribute`'s order: the order the
+    /// attribute filter screen offers them in.
+    pub const ALL: [(&'static str, StandardKind); 14] = [
+        ("placeable", Self::Placeable),
+        ("consumable", Self::Consumable),
+        ("fluid_container", Self::FluidContainer),
+        ("enchanted", Self::Enchanted),
+        ("renamed", Self::Renamed),
+        ("damaged", Self::Damaged),
+        ("badly_damaged", Self::BadlyDamaged),
+        ("not_stackable", Self::NotStackable),
+        ("equipable", Self::Equipable),
+        ("furnace_fuel", Self::FurnaceFuel),
+        ("smeltable", Self::Smeltable),
+        ("smokable", Self::Smokable),
+        ("blastable", Self::Blastable),
+        ("compostable", Self::Compostable),
+    ];
+
     pub fn parse(value: &str) -> Option<Self> {
         Some(match value.to_ascii_lowercase().as_str() {
             "placeable" => Self::Placeable,
@@ -202,11 +221,11 @@ impl AttributeFilter {
                     .map(|kind| AttributeRule::Standard { kind, inverted }),
                 "codedefinedgui:added_by" => payload_str(payload, "id")
                     .map(|namespace| AttributeRule::AddedBy { namespace, inverted }),
-                "codedefinedgui:enchantment" => payload_str(payload, "id")
+                "codedefinedgui:has_enchantment" | "codedefinedgui:enchantment" => payload_str(payload, "id")
                     .map(|id| AttributeRule::Enchantment { id, inverted }),
-                "codedefinedgui:fluid_contents" => payload_str(payload, "id")
+                "codedefinedgui:has_fluid" | "codedefinedgui:fluid_contents" => payload_str(payload, "id")
                     .map(|id| AttributeRule::FluidContents { id, inverted }),
-                "codedefinedgui:item_name" => payload_str(payload, "value")
+                "codedefinedgui:has_name" | "codedefinedgui:item_name" => payload_str(payload, "value")
                     .map(|value| AttributeRule::ItemName { value, inverted }),
                 _ => None,
             };
@@ -314,7 +333,7 @@ fn eval_rule(host_ref: &dyn Host, rule: &AttributeRule, stack: &ItemStack) -> bo
     }
 }
 
-fn eval_standard(host_ref: &dyn Host, kind: &StandardKind, stack: &ItemStack) -> bool {
+pub fn eval_standard(host_ref: &dyn Host, kind: &StandardKind, stack: &ItemStack) -> bool {
     let key = stack.item();
     match kind {
         StandardKind::Placeable => host_ref.item_block(key).is_some(),
@@ -516,6 +535,226 @@ fn write_filter(
         .is_ok()
 }
 
+// ---------------------------------------------------------------------------
+// The filter screens' draft, committed in one piece (`FilterMenu.commitDraft`)
+// ---------------------------------------------------------------------------
+
+/// Ghost slots of a list filter (`ListFilterMenu.FILTER_SLOTS`).
+pub const LIST_SLOTS: usize = 18;
+/// Rules an attribute filter may hold (`AttributeFilterConfig.STREAM_CODEC`'s list bound).
+pub const MAX_RULES: usize = 256;
+
+/// The attribute types a rule may have, each with the key of its one payload string
+/// (`ItemAttributes`, in registration order).
+pub const RULE_TYPES: [(&str, &str); 6] = [
+    ("codedefinedgui:standard", "value"),
+    ("codedefinedgui:in_tag", "id"),
+    ("codedefinedgui:added_by", "id"),
+    ("codedefinedgui:has_enchantment", "id"),
+    ("codedefinedgui:has_fluid", "id"),
+    ("codedefinedgui:has_name", "value"),
+];
+
+/// The stacks a filter keeps in `component` (`ItemContainerContents`), by slot. Reads both the
+/// `{slot, item}` entries the screens write and the plain list of stacks older saves hold.
+pub fn stored_slots(host_ref: &dyn Host, filter: &ItemStack, component: &str) -> Vec<(usize, Tag)> {
+    let entries = match items::component_tag(host_ref, filter, component) {
+        Some(Tag::List(entries)) => entries,
+        Some(Tag::Compound(map)) => list(map.get(&"slots".into())),
+        _ => Vec::new(),
+    };
+    entries
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, entry)| {
+            let Tag::Compound(map) = &entry else {
+                return None;
+            };
+            match map.get(&"item".into()) {
+                Some(item) => {
+                    let slot = usize::try_from(host::int(map, "slot", index as i32)).ok()?;
+                    Some((slot, item.clone()))
+                }
+                None => Some((index, entry)),
+            }
+        })
+        .collect()
+}
+
+fn slot_entry(slot: usize, item: Tag) -> Tag {
+    let mut entry = Compound::new();
+    entry.insert("slot".into(), Tag::Int(slot as i32));
+    entry.insert("item".into(), item);
+    Tag::Compound(entry)
+}
+
+/// One attribute rule as the filter's config stores it.
+pub fn rule_tag(type_id: &str, key: &str, value: &str, inverted: bool) -> Tag {
+    let mut payload = Compound::new();
+    payload.insert(key.into(), Tag::String(value.into()));
+    let mut rule = Compound::new();
+    rule.insert("type".into(), Tag::String(type_id.into()));
+    rule.insert("payload".into(), Tag::Compound(payload));
+    rule.insert("inverted".into(), Tag::Byte(i8::from(inverted)));
+    Tag::Compound(rule)
+}
+
+/// What a draft says a ghost slot holds: nothing, the stack the filter already kept in a slot,
+/// or a copy of a stack in the player's inventory. The client never sends a stack of its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GhostSource {
+    Empty,
+    Kept(usize),
+    Inventory(u32),
+}
+
+pub fn ghost_source(value: &Value) -> Option<GhostSource> {
+    if value.is_null() {
+        return Some(GhostSource::Empty);
+    }
+    let index = |key: &str| value.get(key).and_then(Value::as_u64);
+    if let Some(slot) = index("keep") {
+        return Some(GhostSource::Kept(usize::try_from(slot).ok()?));
+    }
+    index("inv").and_then(|slot| u32::try_from(slot).ok()).map(GhostSource::Inventory)
+}
+
+fn ghost_template(
+    host_ref: &dyn ServerHost,
+    player_id: u128,
+    stored: &[(usize, Tag)],
+    source: GhostSource,
+) -> Option<Option<Tag>> {
+    match source {
+        GhostSource::Empty => Some(None),
+        GhostSource::Kept(slot) => {
+            Some(stored.iter().find(|(at, _)| *at == slot).map(|(_, item)| item.clone()))
+        }
+        GhostSource::Inventory(slot) => {
+            let inventory = host_ref.player(player_id)?.inventory_slots(host_ref)?;
+            let mut stack = inventory.into_iter().find(|(at, _)| *at == slot)?.1;
+            // A filter is never listed in a filter: upstream locks the slot the open filter is in.
+            let id = stack.item().id(host_ref);
+            if stack.count() == 0 || matches!(id.as_str(), "theurgy:list_filter" | "theurgy:attribute_filter") {
+                return None;
+            }
+            let _ = stack.set_count(1);
+            Some(Some(stack_to_template(host_ref, &stack)))
+        }
+    }
+}
+
+/// `ListFilterMenu.commitDraft`: mode, component matching and the ghost slots, from the
+/// screen's draft `{"mode", "respect", "slots": [null | {"keep": n} | {"inv": n}, ...]}`.
+fn commit_list(
+    host_ref: &dyn ServerHost,
+    player_id: u128,
+    filter: &mut ItemStack,
+    draft: &Value,
+) -> bool {
+    let Some(mode) = draft.get("mode").and_then(Value::as_str).filter(|m| matches!(*m, "allow" | "deny"))
+    else {
+        return false;
+    };
+    let Some(slots) = draft.get("slots").and_then(Value::as_array).filter(|s| s.len() <= LIST_SLOTS)
+    else {
+        return false;
+    };
+    let stored = stored_slots(host_ref, filter, LIST_CONTENTS);
+    let mut contents = Vec::new();
+    for (slot, value) in slots.iter().enumerate() {
+        let Some(item) = ghost_source(value)
+            .and_then(|source| ghost_template(host_ref, player_id, &stored, source))
+        else {
+            return false;
+        };
+        if let Some(item) = item {
+            contents.push(slot_entry(slot, item));
+        }
+    }
+    let mut cfg = compound(items::component_tag(host_ref, filter, LIST_CONFIG));
+    cfg.insert("mode".into(), Tag::String(mode.into()));
+    let respect = draft.get("respect").and_then(Value::as_bool).unwrap_or(false);
+    cfg.insert("respect_data_components".into(), Tag::Byte(i8::from(respect)));
+    items::set_stack_component(filter, LIST_CONFIG, Tag::Compound(cfg));
+    items::set_stack_component(filter, LIST_CONTENTS, Tag::List(contents));
+    true
+}
+
+/// One rule of an attribute draft: `{"keep": n}` for a rule the filter already has, or
+/// `{"type", "value", "inverted"}` for a new one of a known type.
+pub fn draft_rule(stored: &[Tag], value: &Value) -> Option<Tag> {
+    if let Some(index) = value.get("keep").and_then(Value::as_u64) {
+        return stored.get(usize::try_from(index).ok()?).cloned();
+    }
+    let type_id = value.get("type").and_then(Value::as_str)?;
+    let (type_id, key) = RULE_TYPES.iter().find(|(id, _)| *id == type_id)?;
+    let text = value.get("value").and_then(Value::as_str).filter(|v| !v.is_empty() && v.len() <= 256)?;
+    let inverted = value.get("inverted").and_then(Value::as_bool).unwrap_or(false);
+    Some(rule_tag(type_id, key, text, inverted))
+}
+
+/// `AttributeFilterMenu.commitDraft`: mode, reference stack and rules, from the screen's draft
+/// `{"mode", "reference": null | {"keep": 0} | {"inv": n}, "rules": [...]}`.
+fn commit_attribute(
+    host_ref: &dyn ServerHost,
+    player_id: u128,
+    filter: &mut ItemStack,
+    draft: &Value,
+) -> bool {
+    let Some(mode) = draft
+        .get("mode")
+        .and_then(Value::as_str)
+        .filter(|m| matches!(*m, "match_any" | "match_all" | "deny"))
+    else {
+        return false;
+    };
+    let Some(drafts) = draft.get("rules").and_then(Value::as_array).filter(|r| r.len() <= MAX_RULES)
+    else {
+        return false;
+    };
+    let mut cfg = compound(items::component_tag(host_ref, filter, ATTRIBUTE_CONFIG));
+    let stored_rules = list(cfg.get(&"rules".into()));
+    let Some(rules) = drafts
+        .iter()
+        .map(|value| draft_rule(&stored_rules, value))
+        .collect::<Option<Vec<Tag>>>()
+    else {
+        return false;
+    };
+    let stored = stored_slots(host_ref, filter, ATTRIBUTE_REFERENCE);
+    let Some(reference) = ghost_source(draft.get("reference").unwrap_or(&Value::Null))
+        .and_then(|source| ghost_template(host_ref, player_id, &stored, source))
+    else {
+        return false;
+    };
+    cfg.insert("mode".into(), Tag::String(mode.into()));
+    cfg.insert("rules".into(), Tag::List(rules));
+    items::set_stack_component(filter, ATTRIBUTE_CONFIG, Tag::Compound(cfg));
+    let reference = reference.map(|item| slot_entry(0, item)).into_iter().collect();
+    items::set_stack_component(filter, ATTRIBUTE_REFERENCE, Tag::List(reference));
+    true
+}
+
+/// The `commit` action of either filter screen. The result is validated like any other edit.
+fn commit(
+    host_ref: &mut dyn ServerHost,
+    player_id: u128,
+    hand: Hand,
+    mut filter: ItemStack,
+    json: &str,
+) -> bool {
+    let Ok(draft) = mod_api::serde_json::from_str::<Value>(json) else {
+        return false;
+    };
+    let ok = match filter.item().id(&*host_ref).as_str() {
+        "theurgy:list_filter" => commit_list(&*host_ref, player_id, &mut filter, &draft),
+        "theurgy:attribute_filter" => commit_attribute(&*host_ref, player_id, &mut filter, &draft),
+        _ => false,
+    };
+    ok && write_filter(host_ref, player_id, hand, filter)
+}
+
 pub fn apply_action(
     host_ref: &mut dyn ServerHost,
     player_id: u128,
@@ -530,6 +769,9 @@ pub fn apply_action(
     let Some(filter) = place.stack(host_ref) else {
         return false;
     };
+    if action == "commit" {
+        return commit(host_ref, player_id, hand, filter, rest);
+    }
     let item_id = filter.item().id(&*host_ref);
     match item_id.as_str() {
         "theurgy:list_filter" => list_action(host_ref, player_id, hand, filter, action, rest),
@@ -796,6 +1038,46 @@ mod tests {
         };
         assert!(matches!(map.get(&"value".into()), Some(Tag::String(_))));
         assert!(matches!(map.get(&"nested".into()), Some(Tag::List(_))));
+    }
+
+    #[test]
+    fn a_draft_names_where_each_ghost_comes_from() {
+        assert_eq!(ghost_source(&Value::Null), Some(GhostSource::Empty));
+        assert_eq!(ghost_source(&json!({"keep": 3})), Some(GhostSource::Kept(3)));
+        assert_eq!(ghost_source(&json!({"inv": 17})), Some(GhostSource::Inventory(17)));
+        // A stack is never taken from the client: only a place the server can look at.
+        assert_eq!(ghost_source(&json!({"id": "minecraft:diamond"})), None);
+        assert_eq!(ghost_source(&json!({"inv": -1})), None);
+    }
+
+    #[test]
+    fn a_draft_rule_is_kept_or_built_from_a_known_type() {
+        let stored = vec![rule_tag("codedefinedgui:standard", "value", "renamed", true)];
+        assert_eq!(draft_rule(&stored, &json!({"keep": 0})), Some(stored[0].clone()));
+        assert_eq!(draft_rule(&stored, &json!({"keep": 1})), None);
+        let built = draft_rule(
+            &stored,
+            &json!({"type": "codedefinedgui:in_tag", "value": "c:ingots", "inverted": true}),
+        )
+        .expect("rule");
+        assert_eq!(built, rule_tag("codedefinedgui:in_tag", "id", "c:ingots", true));
+        assert_eq!(draft_rule(&stored, &json!({"type": "codedefinedgui:bogus", "value": "x"})), None);
+        assert_eq!(draft_rule(&stored, &json!({"type": "codedefinedgui:in_tag", "value": ""})), None);
+
+        // Every type the screen can add parses back into a rule the filter can evaluate.
+        for (type_id, key) in RULE_TYPES {
+            let value = if type_id == "codedefinedgui:standard" { "renamed" } else { "minecraft:thing" };
+            let mut cfg = Compound::new();
+            cfg.insert("rules".into(), Tag::List(vec![rule_tag(type_id, key, value, false)]));
+            assert!(AttributeFilter::from_config_nbt(Some(&cfg)).is_valid(), "{type_id}");
+        }
+    }
+
+    #[test]
+    fn standard_attributes_are_listed_once_each_under_their_own_id() {
+        for (id, kind) in StandardKind::ALL {
+            assert_eq!(StandardKind::parse(id), Some(kind), "{id}");
+        }
     }
 
     #[test]

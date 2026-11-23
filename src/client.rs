@@ -14,21 +14,19 @@ use mod_api::client::hud_layout::PoseOp;
 use mod_api::serde_json;
 use mod_api::text::TextStyle;
 use mod_api::{
-    ClientHost, DrawContext, Flow, GuiDraw, GuiLayer, GuiLayerDrawEvent, GuiLayerPlacement, Hand,
-    HudMode, IPayloadContext, Identifier, InputKeyEvent, InteractionKey,
+    ClientHost, DrawContext, Flow, GuiDraw, GuiLayer, GuiLayerPlacement, Hand,
+    IPayloadContext, Identifier, InputKeyEvent, InteractionKey,
     InteractionKeyMappingTriggeredEvent, ItemDecorationsEvent, ItemStack, KeyAction,
     KeyRegistration, MouseScrollingEvent, PayloadCodec, PayloadId, PayloadWork,
     RegisterGuiLayersEvent, Registrar, ScreenCharTypedPreEvent, ScreenKeyPressedPreEvent,
     ScreenMouseButtonPressedPreEvent, ScreenMouseDraggedPreEvent, ScreenMouseScrolledPreEvent,
-    ScreenRenderPostEvent, ServerHost, SoundPlay, Tag, Text, ToClient, ToServer, VarInt,
+    ScreenRenderPostEvent, ServerHost, SoundPlay, Text, ToClient, ToServer, VarInt,
 };
 
-use crate::{book, config, filter, filter_client, host, items, recipe_client};
+use crate::{book, filter, filter_client, host, hud, items, recipe_client, selection};
 
 /// Hermetica book data bundled with the package (`data/` is packed in `.hmod`).
 const HERMETICA_JSON: &[u8] = include_bytes!("../data/theurgy/hermetica.json");
-
-const HUD_LAYER_ID: &str = "theurgy:hud";
 
 // ---------------------------------------------------------------------------
 // Typed network payloads
@@ -44,6 +42,12 @@ pub struct WandModePayload {
     pub delta: VarInt,
 }
 
+/// A left click with the wand in its select-frequency mode: the frequency moves by `delta`.
+#[derive(Clone, Debug, PayloadCodec)]
+pub struct WandFrequencyPayload {
+    pub delta: VarInt,
+}
+
 #[derive(Clone, Debug, PayloadCodec)]
 pub struct FilterEditPayload {
     pub off_hand: bool,
@@ -51,9 +55,48 @@ pub struct FilterEditPayload {
     pub args: String,
 }
 
+/// The acting player's pending emitter selection: six numbers per outline box, one colour each.
+#[derive(Clone, Debug, PayloadCodec)]
+pub struct SelectionPayload {
+    pub boxes: Vec<f64>,
+    pub colors: Vec<i32>,
+}
+
+static SELECTION_TO_CLIENT: OnceLock<ToClient<SelectionPayload>> = OnceLock::new();
+
+fn selection_outlines(payload: &SelectionPayload) -> Vec<([f64; 6], u32)> {
+    payload
+        .boxes
+        .chunks_exact(6)
+        .zip(&payload.colors)
+        .map(|(b, color)| (std::array::from_fn(|i| b[i]), *color as u32 & 0x00FF_FFFF))
+        .collect()
+}
+
+/// Server: tell `player_id`'s client which blocks to outline. In singleplayer there is no
+/// remote session to send through, and the client half of this same process is set directly.
+pub fn send_selection(
+    host_ref: &mut dyn ServerHost,
+    player_id: u128,
+    outlines: Vec<([f64; 6], u32)>,
+) {
+    let payload = SelectionPayload {
+        boxes: outlines.iter().flat_map(|(b, _)| *b).collect(),
+        colors: outlines.iter().map(|(_, color)| *color as i32).collect(),
+    };
+    let sent = SELECTION_TO_CLIENT
+        .get()
+        .zip(host_ref.player(player_id))
+        .is_some_and(|(token, player)| token.send(host_ref, player, &payload).is_ok());
+    if !sent {
+        selection::set_outlines(outlines);
+    }
+}
+
 static BOOK_TO_SERVER: OnceLock<ToServer<BookProgressPayload>> = OnceLock::new();
 static BOOK_TO_CLIENT: OnceLock<ToClient<BookProgressPayload>> = OnceLock::new();
 static WAND_TO_SERVER: OnceLock<ToServer<WandModePayload>> = OnceLock::new();
+static FREQUENCY_TO_SERVER: OnceLock<ToServer<WandFrequencyPayload>> = OnceLock::new();
 static FILTER_TO_SERVER: OnceLock<ToServer<FilterEditPayload>> = OnceLock::new();
 
 static BOOK_PROGRESS: Mutex<BTreeMap<u128, Vec<u8>>> = Mutex::new(BTreeMap::new());
@@ -62,6 +105,8 @@ static LOCAL_PLAYER_ID: Mutex<Option<u128>> = Mutex::new(None);
 enum LocalAction {
     BookSave(Vec<u8>),
     WandMode(i32),
+    WandFrequency(i32),
+    HudRequest([i32; 3]),
     FilterEdit {
         hand: Hand,
         action: String,
@@ -109,6 +154,10 @@ pub fn drain_local_actions(host_ref: &mut dyn ServerHost) {
             LocalAction::WandMode(delta) => {
                 items::change_wand_mode(host_ref, player_id, delta.clamp(-1, 1));
             }
+            LocalAction::WandFrequency(delta) => {
+                items::change_wand_frequency(host_ref, player_id, delta.clamp(-1, 1));
+            }
+            LocalAction::HudRequest(pos) => hud::answer(host_ref, player_id, pos),
             LocalAction::FilterEdit { hand, action, args } => {
                 let _ = filter::apply_action(host_ref, player_id, hand, &action, &args);
             }
@@ -139,6 +188,23 @@ impl PayloadWork for WandModeWork {
         }
         Ok(())
     }
+}
+
+struct WandFrequencyWork(i32);
+impl PayloadWork for WandFrequencyWork {
+    fn run(&self, cx: &mut dyn IPayloadContext) -> Result<(), String> {
+        if let (Ok(player), Ok(host_ref)) = (cx.player(), cx.server_host())
+            && let Some(uuid) = player.entity().uuid(host_ref)
+        {
+            items::change_wand_frequency(host_ref, uuid, self.0);
+        }
+        Ok(())
+    }
+}
+
+/// Singleplayer path of the in-world HUD's request (no remote session to send it through).
+pub fn queue_hud_request(pos: [i32; 3]) {
+    queue_local_action(LocalAction::HudRequest(pos));
 }
 
 struct FilterEditWork {
@@ -179,6 +245,15 @@ pub fn register_payloads(r: &mut dyn Registrar) {
     let _ = BOOK_TO_SERVER.set(book_c2s);
     let _ = BOOK_TO_CLIENT.set(book_s2c);
 
+    let selection_s2c = view.play_to_client_typed::<SelectionPayload>(
+        PayloadId("theurgy:selection".into()),
+        |value, _cx| {
+            selection::set_outlines(selection_outlines(&value));
+            Ok(())
+        },
+    );
+    let _ = SELECTION_TO_CLIENT.set(selection_s2c);
+
     let wand_c2s = view.play_to_server_typed::<WandModePayload>(
         PayloadId("theurgy:wand_mode".into()),
         |value, cx| {
@@ -188,6 +263,18 @@ pub fn register_payloads(r: &mut dyn Registrar) {
         },
     );
     let _ = WAND_TO_SERVER.set(wand_c2s);
+
+    let frequency_c2s = view.play_to_server_typed::<WandFrequencyPayload>(
+        PayloadId("theurgy:wand_frequency".into()),
+        |value, cx| {
+            let delta = value.delta.0.clamp(-1, 1);
+            let _ = cx.enqueue_work(Arc::new(WandFrequencyWork(delta)));
+            Ok(())
+        },
+    );
+    let _ = FREQUENCY_TO_SERVER.set(frequency_c2s);
+
+    hud::register(&mut view);
 
     let filter_c2s = view.play_to_server_typed::<FilterEditPayload>(
         PayloadId("theurgy:filter_edit".into()),
@@ -225,7 +312,7 @@ pub fn register_keys(r: &mut dyn Registrar) {
 
 pub fn register_gui_layers(event: &mut RegisterGuiLayersEvent<'_>) {
     event.layers.push(GuiLayer {
-        id: HUD_LAYER_ID.to_owned(),
+        id: hud::LAYER_ID.to_owned(),
         placement: GuiLayerPlacement::AboveAll,
     });
 }
@@ -607,7 +694,8 @@ pub fn client_tick_post(host_ref: &mut dyn ClientHost) {
             });
         }
     }
-    filter_client::tick_refresh(host_ref);
+    filter_client::tick(host_ref);
+    hud::client_tick(host_ref);
 }
 
 fn book_screen(host_ref: &dyn ClientHost, screen_id: &str) -> bool {
@@ -704,7 +792,7 @@ pub fn screen_char_typed(
 // Input hooks: keys, scroll, interaction key (open book/filter)
 // ---------------------------------------------------------------------------
 
-fn local_hand_stack(host_ref: &dyn ClientHost, hand: Hand) -> Option<ItemStack> {
+pub fn local_hand_stack(host_ref: &dyn ClientHost, hand: Hand) -> Option<ItemStack> {
     let player = host_ref.local_player()?;
     host_ref.living(player.entity())?.hand_item(host_ref, hand)
 }
@@ -751,6 +839,23 @@ pub fn input_key(host_ref: &mut dyn ClientHost, event: &mut InputKeyEvent<'_>) {
     }
 }
 
+/// `SelectFrequencyMode.onLeftClickEmpty`: a left click at nothing lowers the wand's selected
+/// frequency. The click never reaches the server on its own, so the client tells it.
+pub fn left_click_empty(host_ref: &mut dyn ClientHost) {
+    let selecting = local_hand_stack(host_ref, Hand::Main).is_some_and(|stack| {
+        stack.item().id(host_ref) == items::MERCURIAL_WAND && items::wand_mode(host_ref, &stack) == 2
+    });
+    if !selecting {
+        return;
+    }
+    let sent = FREQUENCY_TO_SERVER.get().is_some_and(|token| {
+        token.send(host_ref, &WandFrequencyPayload { delta: VarInt(-1) }).is_ok()
+    });
+    if !sent {
+        queue_local_action(LocalAction::WandFrequency(-1));
+    }
+}
+
 pub fn mouse_scrolling(
     host_ref: &mut dyn ClientHost,
     event: &mut MouseScrollingEvent,
@@ -790,7 +895,7 @@ pub fn mouse_scrolling(
 // Derivative jar item decorations & HUD layer
 // ---------------------------------------------------------------------------
 
-fn derivative_source(host_ref: &dyn ClientHost, stack: &ItemStack) -> Option<String> {
+pub fn derivative_source(host_ref: &dyn ClientHost, stack: &ItemStack) -> Option<String> {
     if let Some(item) = items::component_string(host_ref, stack, "theurgy:source_item")
         && host::item_key(host_ref, &item).is_some()
     {
@@ -804,7 +909,7 @@ fn derivative_source(host_ref: &dyn ClientHost, stack: &ItemStack) -> Option<Str
     Some(first.id(host_ref))
 }
 
-fn derivative_tier(host_ref: &dyn ClientHost, stack: &ItemStack, item_id: &str) -> Option<&'static str> {
+pub fn derivative_tier(host_ref: &dyn ClientHost, stack: &ItemStack, item_id: &str) -> Option<&'static str> {
     if item_id.starts_with("theurgy:alchemical_niter_") {
         return ["abundant", "common", "commond", "rare", "precious"]
             .into_iter()
@@ -822,6 +927,9 @@ fn derivative_tier(host_ref: &dyn ClientHost, stack: &ItemStack, item_id: &str) 
         })
 }
 
+/// `AlchemicalDerivativeRenderer`'s shift view: in a slot, holding Shift shows the jar's source
+/// item at full size over it. The jar itself, with its frame, label and small source item, is
+/// the item's special model (`derivative.rs`) in every context.
 pub fn item_decorations(host_ref: &dyn ClientHost, event: &mut ItemDecorationsEvent<'_>) {
     let item_id = event.stack.item().id(host_ref);
     if !item_id.starts_with("theurgy:alchemical_sulfur_")
@@ -829,205 +937,10 @@ pub fn item_decorations(host_ref: &dyn ClientHost, event: &mut ItemDecorationsEv
     {
         return;
     }
-    let source = derivative_source(host_ref, event.stack);
-    let (x, y) = (event.x, event.y);
-    if host_ref.modifiers().shift() {
-        if let Some(source_id) = source
-            && let Some(key) = host::item_key(host_ref, &source_id)
-        {
-            let _ = event.draw.item(key, [x, y], 16.0);
-        }
-        return;
-    }
-    if let Some(tier) = derivative_tier(host_ref, event.stack, &item_id)
-        && let Some(key) = host::item_key(host_ref, &format!("theurgy:jar_label_frame_{tier}_icon"))
-    {
-        let _ = event.draw.item(key, [x, y], 16.0);
-    }
-    if let Some(key) = host::item_key(host_ref, "theurgy:jar_label_icon") {
-        let _ = event.draw.item(key, [x, y], 16.0);
-    }
-    if let Some(source_id) = source
-        && config::get().render_sulfur_source_item
+    if host_ref.modifiers().shift()
+        && let Some(source_id) = derivative_source(host_ref, event.stack)
         && let Some(key) = host::item_key(host_ref, &source_id)
     {
-        let _ = event.draw.item(key, [x + 5.0, y + 7.0], 6.0);
-    }
-}
-
-/// A translated line of the HUD, or `fallback` when the language has no such key.
-fn hud_text(host_ref: &dyn ClientHost, key: &str, fallback: &str) -> String {
-    host_ref.translate(key).unwrap_or_else(|| fallback.to_owned())
-}
-
-/// Fills the `%s` holes of a translated template, in order.
-fn hud_fill(template: &str, values: &[String]) -> String {
-    let mut out = template.to_owned();
-    for value in values {
-        out = out.replacen("%s", value, 1);
-    }
-    out
-}
-
-/// A block's display name as the language has it (`block.<namespace>.<path>`).
-fn block_display_name(host_ref: &dyn ClientHost, block: &str) -> String {
-    match block.split_once(':') {
-        Some((namespace, path)) => hud_text(host_ref, &format!("block.{namespace}.{path}"), block),
-        None => block.to_owned(),
-    }
-}
-
-/// The mercurial wand's current mode, named as its action bar names it, with its English name.
-fn wand_mode_name(host_ref: &dyn ClientHost, mode: i32) -> String {
-    let (key, english) = match mode {
-        0 => ("item.mode.theurgy.mercurial_wand.rotate_selected_direction", "Cycle selected direction"),
-        1 => ("item.mode.theurgy.mercurial_wand.switch_logistics_enabled", "Enable/Disable"),
-        2 => ("item.mode.theurgy.mercurial_wand.select_frequency", "Select frequency"),
-        3 => ("item.mode.theurgy.mercurial_wand.set_selected_frequency", "Set selected frequency"),
-        4 => ("item.mode.theurgy.mercurial_wand.cycle_capacitor_side", "Cycle capacitor side"),
-        _ => return "Unknown mode".to_owned(),
-    };
-    hud_text(host_ref, key, english)
-}
-
-/// The HUD's line for the block under the crosshair: its name and progress, flux and tank, and the
-/// stacks it holds, in the top centre of the screen.
-pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'_>) {
-    if event.layer != HUD_LAYER_ID {
-        return;
-    }
-    let settings = config::get();
-    if !settings.enable_item_hud || host_ref.hud_mode() != HudMode::AllVisible {
-        return;
-    }
-    // Not behind the book, the filter or the recipe screen.
-    if host_ref.mod_screen().is_some() {
-        return;
-    }
-    const NAME: u32 = 0xFFE7_D59A;
-    const LINE: u32 = 0xFFFF_FFFF;
-    let mut lines: Vec<(String, u32)> = Vec::new();
-    let mut stacks: Vec<ItemStack> = Vec::new();
-    if let Some(stack) = local_hand_stack(host_ref, Hand::Main)
-        && stack.item().id(host_ref) == items::MERCURIAL_WAND
-    {
-        let mode = items::wand_mode(host_ref, &stack);
-        let freq = items::component_i32(host_ref, &stack, items::SELECTED_FREQUENCY).unwrap_or(0);
-        let name = wand_mode_name(host_ref, mode);
-        lines.push((name, NAME));
-        let frequency = hud_text(host_ref, "theurgy.hud.frequency", "Frequency: %s");
-        lines.push((hud_fill(&frequency, &[freq.to_string()]), LINE));
-    }
-    if settings.enable_in_world_hud
-        && let Some(hit) = host_ref.raycast(6.0)
-    {
-        let block = hit.block.id(host_ref);
-        if block.starts_with("theurgy:") {
-            lines.push((block_display_name(host_ref, &block), NAME));
-            let pos = [hit.block_x, hit.block_y, hit.block_z];
-            if let Some(player) = host_ref.local_player()
-                && let Some(level) = player.level(host_ref)
-                && let Some(be) = host_ref.block_entity(level, pos)
-                && let Some(nbt) = be.data(host_ref)
-            {
-                let progress = host::int(&nbt, "progress", 0);
-                let total = host::int(&nbt, "totalTime", 0);
-                if total > 0 {
-                    let template = hud_text(host_ref, "theurgy.hud.progress", "Progress: %s / %s");
-                    lines.push((
-                        hud_fill(&template, &[progress.to_string(), total.to_string()]),
-                        LINE,
-                    ));
-                }
-                if let Some(Tag::Compound(handler)) = nbt.get(&"mercuryFluxHandler".into()) {
-                    let energy = host::int(handler, "energy", 0);
-                    let template = hud_text(host_ref, "theurgy.hud.mercury_flux", "Mercury flux: %s");
-                    lines.push((hud_fill(&template, &[energy.to_string()]), LINE));
-                }
-                if let Some(Tag::List(fluids)) = nbt.get(&"fluids".into())
-                    && let Some(Tag::Compound(tank)) = fluids.first()
-                {
-                    let amount = host::int(tank, "Amount", 0);
-                    if amount > 0 {
-                        let fluid = host::string(tank, "Fluid").unwrap_or_else(|| "fluid".into());
-                        let template = hud_text(host_ref, "theurgy.hud.fluid", "%s: %s mB");
-                        let name = block_display_name(host_ref, &fluid);
-                        lines.push((hud_fill(&template, &[name, amount.to_string()]), LINE));
-                    }
-                }
-                for index in 0..4 {
-                    if let Ok(Some(stack)) = be.item_slot(host_ref, index) {
-                        stacks.push(stack);
-                    }
-                }
-                // A client's copy has no slots of its own: the server mirrors them into `Items`.
-                if stacks.is_empty()
-                    && let Some(Tag::List(items)) = nbt.get(&"Items".into())
-                {
-                    stacks.extend(
-                        items
-                            .iter()
-                            .filter_map(|item| filter::stack_from_template(host_ref, item)),
-                    );
-                }
-            }
-        }
-    }
-    if lines.is_empty() {
-        return;
-    }
-    let scale = settings.hud_scale.clamp(0.25, 3.0);
-    let gui_width = event.draw.size()[0];
-    // Glyphs are drawn under a pose scaled by `scale`, so a line is its font width times it.
-    let widths: Vec<f32> = lines
-        .iter()
-        .map(|(text, _)| event.draw.text_width(text) * scale)
-        .collect();
-    let line_height = 10.0 * scale;
-    let stack_size = 16.0 * scale;
-    let stack_step = 18.0 * scale;
-    let pad = 3.0 * scale;
-    let top = 4.0 * scale;
-    let widest = widths.iter().copied().fold(0.0_f32, f32::max);
-    let row_width = stacks.len() as f32 * stack_step;
-    let box_width = widest.max(row_width) + 2.0 * pad;
-    let text_height = lines.len() as f32 * line_height;
-    let row_height = if stacks.is_empty() { 0.0 } else { stack_step };
-    let box_height = text_height + row_height + 2.0 * pad;
-    let centre = gui_width / 2.0;
-    event.draw.fill(
-        [centre - box_width / 2.0, top, box_width, box_height],
-        0x7800_0000,
-    );
-    for (index, (text, colour)) in lines.iter().enumerate() {
-        let at = [
-            centre - widths[index] / 2.0,
-            top + pad + index as f32 * line_height,
-        ];
-        let _ = event.draw.gui_paint(&[
-            GuiDraw::Push(vec![
-                PoseOp::Translate(at[0], at[1]),
-                PoseOp::Scale(scale, scale),
-            ]),
-            GuiDraw::Text {
-                text: Text::literal(text.clone()),
-                x: 0,
-                y: 0,
-                color: *colour,
-                shadow: false,
-            },
-            GuiDraw::Pop,
-        ]);
-    }
-    let row_left = centre - row_width / 2.0;
-    for (index, stack) in stacks.iter().enumerate() {
-        event.draw.item_stack(
-            stack,
-            [
-                row_left + index as f32 * stack_step,
-                top + pad + text_height,
-            ],
-            stack_size,
-        );
+        let _ = event.draw.item(key, [event.x, event.y], 16.0);
     }
 }

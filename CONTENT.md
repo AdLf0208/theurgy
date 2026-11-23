@@ -19,6 +19,9 @@ CC-BY-4.0) plus the third-party notices in `THIRD_PARTY_NOTICES.md`.
 | `data/theurgy/worldgen/` | `feature/sal_ammoniac_ore.json` (`minecraft:ore`, size 9, stone + deepslate replaceables) and `placed_feature/sal_ammoniac_ore.json` (count 20, `in_square`, trapezoid -64..200, biome) |
 | `data/theurgy/tags/` & `data/c/tags/` | Item, block and fluid tags (`theurgy:sal_ammoniac` updated to include `theurgy:flowing_sal_ammoniac`) |
 | `data/theurgy/hermetica.json` | Compiled Modonomicon Hermetica book data (included into `src/client.rs` via `include_bytes!`) |
+| `data/theurgy/filter_item_tags.json` | The 576 item tag names the attribute filter screen tests a reference item against (vanilla 26.3's and this package's; `tools/gen_filter_item_tags.py`, included into `src/filter_client.rs`) |
+| `assets/theurgy/textures/gui/codedefinedgui/` | 20 CodeDefinedGUI 1.14.0 sprites the filter screens are drawn with |
+| `assets/theurgy/items/alchemical_{sulfur,niter}_*.json` | 312 item definitions of the special model `theurgy:alchemical_derivative` (`src/derivative.rs`), each naming its jar model |
 
 ## 26.3 dialect check (automated sweep)
 

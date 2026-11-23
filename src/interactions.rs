@@ -16,7 +16,7 @@ use mod_api::{
     ServerHost, Text, TriState, UseItemOnEvent, UseWithoutItemEvent, fluid_util,
 };
 
-use crate::{fluids, host, machines, recipes, registry, selection};
+use crate::{fluids, host, items, machines, recipes, registry, selection};
 
 /// The game tick of each player's last insert. Guards a programmatic click delivering both the
 /// insert and an empty-hand take within one tick, per player: another player's insert never
@@ -115,7 +115,7 @@ pub fn accepts_input(host_ref: &dyn Host, block: &str, stack: &ItemStack) -> boo
     })
 }
 
-fn resolve_entity_pos(
+pub fn resolve_entity_pos(
     host_ref: &dyn Host,
     level: LevelRef,
     pos: [i32; 3],
@@ -199,6 +199,9 @@ fn client_click_answered(
     if FLUID_BUCKETS.contains(&item.as_str()) && has_fluid_tank(&block) {
         return true;
     }
+    if item == items::MERCURIAL_WAND {
+        return items::wand_answers(host_ref, held, &block);
+    }
     if let Some(kind) = selection::emitter_id(&item) {
         return selection::target_accepts(kind, &block, sneaking);
     }
@@ -210,6 +213,12 @@ fn client_click_answered(
 
 fn has_fluid_tank(block: &str) -> bool {
     registry::fluids(block).is_some()
+}
+
+/// Blocks whose sneaking empty-hand click voids the tank: every apparatus with a fluid tank
+/// except the vats, whose lid takes that click.
+fn voids_on_sneak(block: &str, kind: Option<Interaction>) -> bool {
+    has_fluid_tank(block) && kind != Some(Interaction::DynamicOutput)
 }
 
 /// `BlockPart::use_item_on` for apparatus blocks holding an item in hand.
@@ -379,14 +388,25 @@ pub fn interact_empty_hand(
     pos: [i32; 3],
 ) -> Option<InteractionResult> {
     let (entity_pos, block) = resolve_entity_pos(&*host_ref, level, pos)?;
-    let kind = interaction(&block)?;
+    let kind = interaction(&block);
+    let sneaking = host_ref
+        .player(player_id)
+        .is_some_and(|p| p.is_secondary_use_active(&*host_ref).unwrap_or(false));
+
+    // `OneTankFluidHandlerBehaviour.useItemOn`: sneaking with an empty hand voids the tank and
+    // answers the click, whatever the tank held. A vat's lid comes first (its interaction
+    // behaviour claims the same click), so a vat is never voided this way.
+    if sneaking && voids_on_sneak(&block, kind) {
+        if fluids::void_tanks(host_ref, level, entity_pos) {
+            host_ref.block_entity_sync(entity_pos);
+        }
+        return Some(InteractionResult::Success);
+    }
+    let kind = kind?;
 
     if kind == Interaction::DynamicOutput {
         let is_open =
             level.block_property(&*host_ref, entity_pos, "open").as_deref() != Some("false");
-        let sneaking = host_ref
-            .player(player_id)
-            .is_some_and(|p| p.is_secondary_use_active(&*host_ref).unwrap_or(false));
         if sneaking {
             if is_open {
                 if machines::vat_can_craft(host_ref, level, entity_pos) {
@@ -494,5 +514,19 @@ mod tests {
         );
         assert_eq!(interaction("theurgy:distiller"), Some(Interaction::TwoSlot));
         assert_eq!(interaction("minecraft:chest"), None);
+    }
+
+    #[test]
+    fn sneaking_with_an_empty_hand_voids_tanks_but_not_vats() {
+        for block in [
+            "theurgy:sal_ammoniac_tank",
+            "theurgy:sal_ammoniac_accumulator",
+            "theurgy:liquefaction_cauldron",
+        ] {
+            assert!(voids_on_sneak(block, interaction(block)), "{block}");
+        }
+        for block in ["theurgy:fermentation_vat", "theurgy:digestion_vat", "theurgy:distiller"] {
+            assert!(!voids_on_sneak(block, interaction(block)), "{block}");
+        }
     }
 }

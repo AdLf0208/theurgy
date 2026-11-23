@@ -12,6 +12,12 @@
 - `assets/theurgy/textures/gui/modonomicon/**` are the unmodified default theme sprites (`assets/modonomicon/textures/gui/sprites/modonomicon/themes/default/**`) of `com.klikli_dev:modonomicon-26.3-neoforge:2.19.0` (© klikli-dev), licensed **MIT AND CC-BY-4.0** (<https://github.com/klikli-dev/modonomicon#licensing>), copied so the native Hermetica screen looks like the Modonomicon book Theurgy ships with.
 - `native/theurgy/book.rs` reimplements the Modonomicon GUI layout in Rust after Modonomicon's MIT-licensed client code; no Modonomicon code is linked.
 
+## CodeDefinedGUI 1.14.0
+
+- `assets/theurgy/textures/gui/codedefinedgui/**` are 20 unmodified GUI sprites of `com.klikli_dev:codedefinedgui-26.3-neoforge:1.14.0` (`klikli-dev/code-defined-gui`, tag `release/v26.3-1.14.0`; `assets/codedefinedgui/textures/gui/sprites/{core,filter,widget}/*.png`, © 2026 klikli-dev), the library Theurgy 26.3 bundles for its filter menus. Its `REUSE.toml` licenses `src/main/resources/**` and `src/generated/resources/**` **CC-BY-4.0** (its README names the assets' licence "CC-BY-SA-4.0" while linking the CC BY 4.0 text; the per-file REUSE annotation is followed here).
+- The `codedefinedgui.filter.*` and `codedefinedgui.tooltip.show_extended` entries of `assets/theurgy/lang/en_us.json` are that release's generated English texts (same licence); the `ru_ru.json` entries are this port's translation of them.
+- `src/filter_client.rs` reimplements the layout and behaviour of its `ListFilterScreen` / `AttributeFilterScreen` in Rust after CodeDefinedGUI's MIT-licensed code; no CodeDefinedGUI code is linked.
+
 ## NeoForge 26.3.0.76
 
 - The generated addon includes functional JSON item/block tag definitions from the pinned `neoforge-26.3.0.76-universal.jar` so recipes using `#c:*` resolve at runtime.

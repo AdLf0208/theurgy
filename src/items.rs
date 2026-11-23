@@ -9,12 +9,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use mod_api::text::TextStyle;
 use mod_api::{
-    BlockFace, BlockState, BlockUpdateFlags, CanSurviveEvent, ClientHost, Compound, Direction, Flow,
+    BlockFace, BlockKey, BlockState, BlockUpdateFlags, CanSurviveEvent, ClientHost, Compound, Direction, Flow,
     Hand, Host, HostSide, HostTransaction, Identifier, InteractionResult, InventoryTickEvent,
-    ItemDecorationsEvent, ItemKey, ItemPart, ItemPlace, ItemStack, LevelHost, LevelRef,
+    ItemDecorationsEvent, ItemKey, ItemPart, ItemPlace, ItemStack, LeftClickBlockEvent, LevelHost,
+    LevelRef,
     LevelTicksHost, LivingEntityUseItemFinishEvent, LootDropsEvent, OnBlockPlacedByEvent,
     OnDestroyedByPlayerEvent, PrepareItemCraftEvent, ReleaseUsingEvent, RightClickBlockEvent,
-    ServerHost, SoundSource, StateForPlacementEvent, SupportType, Tag, Text, TooltipEvent,
+    ServerHost, SoundSource, StateForPlacementEvent, SupportType, Tag, Text, TooltipEvent, TriState,
     UpdateShapeEvent, UseAnimation, UseAnimationEvent, UseDurationEvent, UseItemEvent, UseOnEvent,
 };
 
@@ -58,7 +59,7 @@ pub const WIRE_ENDPOINTS: [&str; 8] = [
     "theurgy:logistics_mercury_flux_connector",
 ];
 
-const WAND_CONNECTORS: [&str; 5] = [
+pub const WAND_CONNECTORS: [&str; 5] = [
     "theurgy:logistics_item_inserter",
     "theurgy:logistics_item_extractor",
     "theurgy:logistics_fluid_inserter",
@@ -721,17 +722,28 @@ pub fn on_destroyed_by_player(
     {
         if half == "upper" {
             // The lower half is the apparatus: breaking it drops the apparatus and its
-            // contents, as breaking the lower half itself does. The upper half's own loot
-            // table only drops from the lower half's state, so nothing is dropped twice.
-            let _ = level.destroy_block(host_ref, other, true, None, false);
+            // contents, as breaking the lower half itself does (so not in creative, and not
+            // with a tool the block refuses). The upper half's own loot table only drops from
+            // the lower half's state, so nothing is dropped twice.
+            let _ = level.destroy_block(host_ref, other, event.will_harvest, None, false);
         } else if let Some(air) = host_ref.block_state_id("minecraft:air") {
+            // Without a shape update: the lower half would otherwise see its partner gone and
+            // remove itself here, before the game's own removal of the block being broken.
             let _ = level.set_block(
                 host_ref,
                 other,
                 air,
-                BlockUpdateFlags::NEIGHBORS | BlockUpdateFlags::CLIENTS,
+                BlockUpdateFlags::NEIGHBORS
+                    | BlockUpdateFlags::CLIENTS
+                    | BlockUpdateFlags::KNOWN_SHAPE,
             );
         }
+    }
+    // Removing the lower half took the broken upper half with it (its shape update). The
+    // game's removal would then find no block and end the break without wearing the tool or
+    // counting the block as mined; saying the part removed it lets the break finish.
+    if host::block_id_at(&*host_ref, level, event.pos).as_deref() != Some(block) {
+        return Some(true);
     }
     None
 }
@@ -971,78 +983,213 @@ fn attune_rod(
     Some(InteractionResult::Success)
 }
 
-fn scan_rod(
-    host_ref: &mut dyn ServerHost,
-    level: LevelRef,
-    origin: [f64; 3],
-    stack: &ItemStack,
-) -> (Option<[i32; 3]>, f32) {
-    let linked_block =
-        component_string(&*host_ref, stack, DIVINATION_LINKED_BLOCK).filter(|v| !v.is_empty());
-    let linked_tag =
-        component_string(&*host_ref, stack, DIVINATION_LINKED_TAG).filter(|v| !v.is_empty());
-    if linked_block.is_none() && linked_tag.is_none() {
-        return (None, DIVINATION_NOT_FOUND);
+/// Blocks a rod's link stands for (`DivinationRodItem.getScanTargetsForId` / `scanLinkedTag`):
+/// a linked tag's members; else the members of the block's `c:ores/*` tag; else the block and
+/// its deepslate variant.
+fn rod_targets(host_ref: &dyn Host, stack: &ItemStack) -> Vec<BlockKey> {
+    let tag_members = |tag: &str| -> Vec<BlockKey> {
+        let tag = tag.strip_prefix('#').unwrap_or(tag);
+        Identifier::parse(tag)
+            .ok()
+            .and_then(|id| host_ref.tags().key(&id))
+            .and_then(|key| host_ref.tags().blocks(key))
+            .unwrap_or_default()
+    };
+    if let Some(tag) =
+        component_string(host_ref, stack, DIVINATION_LINKED_TAG).filter(|v| !v.is_empty())
+    {
+        return tag_members(&tag);
     }
-    let radius = component_i32(&*host_ref, stack, DIVINATION_RANGE)
-        .unwrap_or(DIVINATION_MAX_RANGE)
-        .clamp(0, DIVINATION_MAX_RANGE);
-    let [ox, oy, oz] = origin;
-    let origin_block = [ox.floor() as i32, oy.floor() as i32, oz.floor() as i32];
+    let Some(block) =
+        component_string(host_ref, stack, DIVINATION_LINKED_BLOCK).filter(|v| !v.is_empty())
+    else {
+        return Vec::new();
+    };
+    for tag in ore_tag_candidates(&block) {
+        let members = tag_members(&tag);
+        if !members.is_empty() {
+            return members;
+        }
+    }
+    let mut targets: Vec<BlockKey> = host_ref.block_key(&block).into_iter().collect();
+    if let Some(deepslate) = deepslate_variant(&block).and_then(|id| host_ref.block_key(&id)) {
+        targets.push(deepslate);
+    }
+    targets
+}
 
-    let linked_ore_tag = linked_block
-        .as_deref()
-        .and_then(|block| ore_tag_candidates(block).into_iter().find(|t| block_tag_nonempty(&*host_ref, t)));
-    let linked_deepslate = linked_block.as_deref().and_then(|block| {
-        deepslate_variant(block).filter(|c| host_ref.block_state_id(c).is_some())
-    });
+/// The vertical run of column `index` of a scan that lies inside the scan sphere and the
+/// level: `(x, z, first y, last y)`. Columns are numbered row by row over the square of side
+/// `2 * radius + 1` around `base`; a block is inside when its centre is within `radius` of
+/// `center` (`Scanner.scan`). None for a column that misses the sphere or the level.
+pub fn scan_column(
+    center: [f64; 3],
+    base: [i32; 3],
+    radius: i32,
+    y_bounds: (i32, i32),
+    index: u32,
+) -> Option<(i32, i32, i32, i32)> {
+    let side = (2 * radius + 1) as u32;
+    if index >= side * side {
+        return None;
+    }
+    let x = base[0] - radius + (index % side) as i32;
+    let z = base[2] - radius + (index / side) as i32;
+    let dx = f64::from(x) + 0.5 - center[0];
+    let dz = f64::from(z) + 0.5 - center[2];
+    let left = f64::from(radius * radius) - dx * dx - dz * dz;
+    if left < 0.0 {
+        return None;
+    }
+    let reach = left.sqrt();
+    let first = ((center[1] - reach - 0.5).ceil() as i32).max(y_bounds.0);
+    let last = ((center[1] + reach - 0.5).floor() as i32).min(y_bounds.1);
+    (first <= last).then_some((x, z, first, last))
+}
 
-    let mut best: Option<([i32; 3], f32)> = None;
-    let mut best_distance2 = f64::INFINITY;
-    let r2 = f64::from(radius * radius);
+/// Columns a scan covers per tick so that it ends within `duration` ticks
+/// (`Scanner.initialize`'s `blocksPerTick`, counted in columns).
+pub fn scan_columns_per_tick(radius: i32, duration: i32) -> u32 {
+    let side = (2 * radius + 1) as u32;
+    (side * side).div_ceil(duration.max(1) as u32)
+}
 
-    for dx in -radius..=radius {
-        let x = origin_block[0] + dx;
-        for dy in -radius..=radius {
-            let y = origin_block[1] + dy;
-            for dz in -radius..=radius {
-                let z = origin_block[2] + dz;
-                let pos = [x, y, z];
-                let Some(block_key) = level.block(&*host_ref, pos) else {
-                    continue;
-                };
-                let block = block_key.id(&*host_ref);
-                if block.is_empty() || is_air_name(&block) {
-                    continue;
+/// A divination rod search in progress: upstream's client `ScanManager`, run on the server a
+/// slice per tick while the rod is being used, so no single tick reads the whole volume.
+struct RodScan {
+    level: LevelRef,
+    center: [f64; 3],
+    base: [i32; 3],
+    radius: i32,
+    y_bounds: (i32, i32),
+    targets: Vec<BlockKey>,
+    column: u32,
+    per_tick: u32,
+    hits: Vec<[i32; 3]>,
+    /// Ticks left before an abandoned scan (no finish, no release) is dropped.
+    life: i32,
+}
+
+/// Hits kept per scan; the nearest is chosen at the end, so a vein-rich area cannot grow it.
+const ROD_SCAN_MAX_HITS: usize = 4096;
+
+static ROD_SCANS: Mutex<Option<HashMap<u128, RodScan>>> = Mutex::new(None);
+
+impl RodScan {
+    fn begin(host_ref: &dyn Host, level: LevelRef, center: [f64; 3], stack: &ItemStack) -> Self {
+        let radius = component_i32(host_ref, stack, DIVINATION_RANGE)
+            .unwrap_or(DIVINATION_MAX_RANGE)
+            .clamp(0, DIVINATION_MAX_RANGE);
+        let duration = component_i32(host_ref, stack, DIVINATION_DURATION).unwrap_or(40).max(1);
+        let (min_y, height) = level.height(host_ref).unwrap_or((-64, 384));
+        Self {
+            level,
+            center,
+            base: [center[0].floor() as i32, center[1].floor() as i32, center[2].floor() as i32],
+            radius,
+            y_bounds: (min_y, min_y + height - 1),
+            targets: rod_targets(host_ref, stack),
+            column: 0,
+            per_tick: scan_columns_per_tick(radius, duration),
+            hits: Vec::new(),
+            life: duration + 40,
+        }
+    }
+
+    fn finished(&self) -> bool {
+        let side = (2 * self.radius + 1) as u32;
+        self.targets.is_empty() || self.column >= side * side
+    }
+
+    /// Reads the next `columns` columns.
+    fn advance(&mut self, host_ref: &dyn Host, columns: u32) {
+        for _ in 0..columns {
+            if self.finished() {
+                return;
+            }
+            let index = self.column;
+            self.column += 1;
+            let Some((x, z, first, last)) =
+                scan_column(self.center, self.base, self.radius, self.y_bounds, index)
+            else {
+                continue;
+            };
+            if !self.level.is_loaded(host_ref, [x, first, z]) {
+                continue;
+            }
+            for y in first..=last {
+                if let Some(block) = self.level.block(host_ref, [x, y, z])
+                    && self.targets.contains(&block)
+                    && self.hits.len() < ROD_SCAN_MAX_HITS
+                {
+                    self.hits.push([x, y, z]);
                 }
-                let matches = if let Some(tag) = linked_tag.as_deref() {
-                    host::in_block_tag(&*host_ref, block_key, tag)
-                } else if let Some(tag) = linked_ore_tag.as_deref() {
-                    host::in_block_tag(&*host_ref, block_key, tag)
-                } else if let Some(id) = linked_block.as_deref() {
-                    block == id || linked_deepslate.as_deref() == Some(block.as_str())
-                } else {
-                    false
-                };
-                if !matches {
-                    continue;
-                }
-                let ddx = f64::from(x) + 0.5 - ox;
-                let ddy = f64::from(y) + 0.5 - oy;
-                let ddz = f64::from(z) + 0.5 - oz;
-                let d2 = ddx * ddx + ddy * ddy + ddz * ddz;
-                if d2 > r2 || d2 >= best_distance2 {
-                    continue;
-                }
-                best_distance2 = d2;
-                best = Some((pos, (ddx * ddx + ddz * ddz).sqrt() as f32));
             }
         }
     }
 
-    match best {
-        Some((pos, dist)) => (Some(pos), distance_bucket(dist)),
-        None => (None, DIVINATION_NOT_FOUND),
+    /// `ScanManager.finishScan`: the rest of the volume, then the hit nearest to `from`.
+    fn finish(mut self, host_ref: &dyn Host, from: [f64; 3]) -> Option<[i32; 3]> {
+        self.advance(host_ref, u32::MAX);
+        nearest_hit(&self.hits, from)
+    }
+}
+
+/// The hit whose centre is nearest to `from` (`BlockPos.distToCenterSqr`).
+pub fn nearest_hit(hits: &[[i32; 3]], from: [f64; 3]) -> Option<[i32; 3]> {
+    let distance = |pos: &[i32; 3]| -> f64 {
+        (0..3).map(|a| (f64::from(pos[a]) + 0.5 - from[a]).powi(2)).sum()
+    };
+    hits.iter().copied().min_by(|a, b| distance(a).total_cmp(&distance(b)))
+}
+
+/// The distance bucket of a result seen from `from` (`DivinationRodItem.getDistance`).
+fn rod_distance(from: [f64; 3], pos: Option<[i32; 3]>) -> f32 {
+    pos.map_or(DIVINATION_NOT_FOUND, |pos| {
+        let dx = f64::from(pos[0]) + 0.5 - from[0];
+        let dz = f64::from(pos[2]) + 0.5 - from[2];
+        distance_bucket((dx * dx + dz * dz).sqrt() as f32)
+    })
+}
+
+fn begin_rod_scan(
+    host_ref: &dyn Host,
+    player: u128,
+    level: LevelRef,
+    center: [f64; 3],
+    stack: &ItemStack,
+) {
+    let scan = RodScan::begin(host_ref, level, center, stack);
+    if let Ok(mut scans) = ROD_SCANS.lock() {
+        scans.get_or_insert_with(HashMap::new).insert(player, scan);
+    }
+}
+
+fn take_rod_scan(player: u128) -> Option<RodScan> {
+    ROD_SCANS.lock().ok()?.as_mut()?.remove(&player)
+}
+
+pub fn clear_rod_scans() {
+    if let Ok(mut scans) = ROD_SCANS.lock() {
+        *scans = None;
+    }
+}
+
+/// `DivinationRodItem.onUseTick`: every running scan reads its slice for this tick.
+pub fn tick_rod_scans(host_ref: &dyn ServerHost) {
+    let Ok(mut guard) = ROD_SCANS.lock() else {
+        return;
+    };
+    let Some(scans) = guard.as_mut() else {
+        return;
+    };
+    scans.retain(|_, scan| {
+        scan.life -= 1;
+        scan.life > 0
+    });
+    for scan in scans.values_mut() {
+        let columns = scan.per_tick;
+        scan.advance(host_ref, columns);
     }
 }
 
@@ -1073,7 +1220,15 @@ pub fn finish_using(
         && let Some(level) = player.level(&*host_ref)
     {
         let origin = player.entity().position(&*host_ref).unwrap_or([0.0; 3]);
-        let (found_pos, bucket) = scan_rod(host_ref, level, origin, event.stack);
+        // The scan began with the use and ran a slice per tick; only what is left runs here.
+        let scan = player
+            .entity()
+            .uuid(host_ref)
+            .and_then(take_rod_scan)
+            .filter(|scan| scan.level == level)
+            .unwrap_or_else(|| RodScan::begin(&*host_ref, level, origin, event.stack));
+        let found_pos = scan.finish(&*host_ref, origin);
+        let bucket = rod_distance(origin, found_pos);
         if let Some(pos) = found_pos {
             set_stack_component(&mut result_stack, DIVINATION_POS, Tag::IntArray(pos.to_vec()));
         }
@@ -1108,7 +1263,7 @@ pub fn wand_mode(host_ref: &dyn Host, stack: &ItemStack) -> i32 {
         .unwrap_or(0) as i32
 }
 
-fn next_direction(ordinal: i32) -> i32 {
+pub fn next_direction(ordinal: i32) -> i32 {
     match ordinal {
         1 => 2,
         2 => 4,
@@ -1120,7 +1275,7 @@ fn next_direction(ordinal: i32) -> i32 {
     }
 }
 
-fn face_direction_upper(face: [i32; 3]) -> &'static str {
+pub fn face_direction_upper(face: [i32; 3]) -> &'static str {
     match face {
         [0, -1, 0] => "DOWN",
         [0, 1, 0] => "UP",
@@ -1130,6 +1285,72 @@ fn face_direction_upper(face: [i32; 3]) -> &'static str {
         [1, 0, 0] => "EAST",
         _ => "NORTH",
     }
+}
+
+fn wand_colored(text: Text, color: &str) -> Text {
+    let mut style = TextStyle::default();
+    style.color = Some(color.to_owned());
+    text.with_style(style)
+}
+
+/// The overlay line a wand mode shows for what it just did (`MercurialWandItemMode.onItemUseFirst`).
+fn wand_message(host_ref: &mut dyn ServerHost, player_id: u128, suffix: &str, arguments: Vec<Text>) {
+    if let Some(player) = host_ref.player(player_id) {
+        let key = format!("item.mode.theurgy.mercurial_wand.{suffix}");
+        let _ = player.action_bar(host_ref, Text::translate(key, arguments));
+    }
+}
+
+/// A direction as the wand names it, by its ordinal.
+pub fn wand_direction_text(ordinal: i32) -> Text {
+    let name = host::dir_to_facing_name(ordinal.clamp(0, 5) as u8);
+    Text::translate(format!("theurgy.side.{name}"), Vec::new())
+}
+
+/// A capacitor side mode as the wand names it (`theurgy.side_mode.*`), by its ordinal.
+pub fn wand_side_mode_text(ordinal: i32) -> Text {
+    let name = ["none", "input", "output", "both"][ordinal.rem_euclid(4) as usize];
+    Text::translate(format!("theurgy.side_mode.{name}"), Vec::new())
+}
+
+/// The side mode a capacitor face has before the wand ever touched it: output on top and
+/// bottom, input on the sides.
+pub fn default_side_mode(direction: &str) -> i32 {
+    if matches!(direction, "UP" | "DOWN") { 2 } else { 1 }
+}
+
+/// `SelectFrequencyMode.changeFrequency` and its overlay line: the wand in the main hand, when
+/// it is in the select-frequency mode, moves its frequency by `delta`.
+pub fn change_wand_frequency(host_ref: &mut dyn ServerHost, player_id: u128, delta: i32) -> bool {
+    let place = ItemPlace::PlayerHand { player: player_id, hand: Hand::Main };
+    let Some(held) = place.stack(host_ref) else {
+        return false;
+    };
+    if held.item().id(&*host_ref) != MERCURIAL_WAND || wand_mode(&*host_ref, &held) != 2 {
+        return false;
+    }
+    let frequency = component_i32(&*host_ref, &held, SELECTED_FREQUENCY).unwrap_or(0) + delta;
+    set_held_component(host_ref, player_id, Hand::Main, SELECTED_FREQUENCY, Tag::Int(frequency));
+    let shown = wand_colored(Text::literal(frequency.to_string()), "green");
+    wand_message(host_ref, player_id, "select_frequency", vec![shown]);
+    true
+}
+
+/// `SelectFrequencyMode.onLeftClickBlock`: a left click lowers the selected frequency and does
+/// not hit the block.
+pub fn wand_left_click(host_ref: &mut dyn ServerHost, event: &mut LeftClickBlockEvent) -> Flow {
+    if event.cancelled {
+        return Flow::Continue;
+    }
+    let player_id = host_ref
+        .players()
+        .acting_player()
+        .and_then(|player| player.entity().uuid(host_ref));
+    if player_id.is_some_and(|id| change_wand_frequency(host_ref, id, -1)) {
+        event.cancelled = true;
+        return Flow::Cancel;
+    }
+    Flow::Continue
 }
 
 fn wand_use_on(
@@ -1158,9 +1379,12 @@ fn wand_use_on(
             if let Some(be) = host_ref.block_entity(level, pos) {
                 let mut nbt = be.data(&*host_ref).unwrap_or_default();
                 let current = host::int(&nbt, "directionOverride", facing);
-                host::set_int(&mut nbt, "directionOverride", next_direction(current));
+                let next = next_direction(current);
+                host::set_int(&mut nbt, "directionOverride", next);
                 let _ = be.merge_data(host_ref, nbt);
                 host_ref.block_entity_sync(pos);
+                let shown = wand_colored(wand_direction_text(next), "green");
+                wand_message(host_ref, player_id, "rotate_selected_direction.success", vec![shown]);
             }
             true
         }
@@ -1171,12 +1395,22 @@ fn wand_use_on(
                 nbt.insert("enabled".into(), Tag::Byte(i8::from(!current)));
                 let _ = be.merge_data(host_ref, nbt);
                 host_ref.block_entity_sync(pos);
+                let (word, color) = if current { ("disabled", "red") } else { ("enabled", "green") };
+                let state = Text::translate(format!("item.mode.theurgy.mercurial_wand.{word}"), Vec::new());
+                wand_message(
+                    host_ref,
+                    player_id,
+                    "switch_logistics_enabled.success",
+                    vec![wand_colored(state, color)],
+                );
             }
             true
         }
         2 => {
             let frequency = component_i32(&*host_ref, stack, SELECTED_FREQUENCY).unwrap_or(0) + 1;
             set_held_component(host_ref, player_id, hand, SELECTED_FREQUENCY, Tag::Int(frequency));
+            let shown = wand_colored(Text::literal(frequency.to_string()), "green");
+            wand_message(host_ref, player_id, "select_frequency", vec![shown]);
             true
         }
         3 if connector => {
@@ -1186,6 +1420,8 @@ fn wand_use_on(
                 host::set_int(&mut nbt, "frequency", frequency);
                 let _ = be.merge_data(host_ref, nbt);
                 host_ref.block_entity_sync(pos);
+                let shown = wand_colored(Text::literal(frequency.to_string()), "green");
+                wand_message(host_ref, player_id, "set_selected_frequency.success", vec![shown]);
             }
             true
         }
@@ -1197,12 +1433,22 @@ fn wand_use_on(
                     Some(Tag::Compound(map)) => map.clone(),
                     _ => Compound::new(),
                 };
-                let fallback = if matches!(dir_name, "UP" | "DOWN") { 2 } else { 1 };
-                let current = host::int(&modes, dir_name, fallback);
-                host::set_int(&mut modes, dir_name, (current + 1).rem_euclid(4));
+                let current = host::int(&modes, dir_name, default_side_mode(dir_name));
+                let next = (current + 1).rem_euclid(4);
+                host::set_int(&mut modes, dir_name, next);
                 nbt.insert("sideModes".into(), Tag::Compound(modes));
                 let _ = be.merge_data(host_ref, nbt);
                 host_ref.block_entity_sync(pos);
+                let side = Text::translate(
+                    format!("theurgy.side.{}", dir_name.to_ascii_lowercase()),
+                    Vec::new(),
+                );
+                wand_message(
+                    host_ref,
+                    player_id,
+                    "cycle_capacitor_side.success",
+                    vec![wand_colored(side, "aqua"), wand_colored(wand_side_mode_text(next), "green")],
+                );
             }
             true
         }
@@ -1286,10 +1532,24 @@ pub fn right_click_block(
         click.hit.face,
         click.stack,
     ) {
+        // The click is answered: the item's own use (a wand's frequency step in the air)
+        // must not run after it.
+        *event.use_item = TriState::False;
+        *event.cancellation_result = InteractionResult::Success;
         event.cancelled = true;
         return Flow::Cancel;
     }
     Flow::Continue
+}
+
+/// Whether a click with the mercurial wand `stack` on `block` is one the wand answers on the
+/// server (`wand_use_on`), so the clicking client must not go on to use the item in the air.
+pub fn wand_answers(host_ref: &dyn Host, stack: &ItemStack, block: &str) -> bool {
+    match wand_mode(host_ref, stack) {
+        2 => true,
+        4 => block == "theurgy:mercury_capacitor",
+        _ => WAND_CONNECTORS.contains(&block),
+    }
 }
 
 /// Direct entry shared by `right_click_block` and `/theurgy_interact`.
@@ -1637,7 +1897,6 @@ impl ItemPart for TheurgyItemPart {
     }
 
     fn inventory_tick(&self, host_ref: &mut dyn ServerHost, event: &mut InventoryTickEvent<'_>) {
-        selection::inventory_tick(host_ref, event.stack, event.selected);
         let item_id = event.stack.item().id(&*host_ref);
         if (item_id == "theurgy:logistics_nexus_id" || item_id == "theurgy:logistics_nexus")
             && uuid_text(&*host_ref, event.stack).is_none()
@@ -1682,15 +1941,9 @@ impl ItemPart for TheurgyItemPart {
         let Some(player_id) = player.entity().uuid(host_ref) else {
             return;
         };
+        let _ = take_rod_scan(player_id);
         let origin = player.entity().position(&*host_ref).unwrap_or([0.0; 3]);
-        let distance = held_divination_pos(&*host_ref, event.stack).map_or(
-            DIVINATION_NOT_FOUND,
-            |pos| {
-                let dx = f64::from(pos[0]) + 0.5 - origin[0];
-                let dz = f64::from(pos[2]) + 0.5 - origin[2];
-                distance_bucket((dx * dx + dz * dz).sqrt() as f32)
-            },
-        );
+        let distance = rod_distance(origin, held_divination_pos(&*host_ref, event.stack));
         set_held_component(
             host_ref,
             player_id,
@@ -1728,14 +1981,10 @@ impl ItemPart for TheurgyItemPart {
             .player(event.player)
             .is_some_and(|p| p.is_secondary_use_active(&*host_ref).unwrap_or(false));
         if item_id == MERCURIAL_WAND && wand_mode(&*host_ref, event.stack) == 2 {
-            let freq = component_i32(&*host_ref, event.stack, SELECTED_FREQUENCY).unwrap_or(0) + 1;
-            set_held_component(
-                host_ref,
-                event.player,
-                event.hand,
-                SELECTED_FREQUENCY,
-                Tag::Int(freq),
-            );
+            // `SelectFrequencyMode.use`: only the main hand's wand counts.
+            if event.hand == Hand::Main {
+                change_wand_frequency(host_ref, event.player, 1);
+            }
             return Some(InteractionResult::Success);
         }
         if item_id == WIRE_ITEM {
@@ -1769,6 +2018,7 @@ impl ItemPart for TheurgyItemPart {
                 && let Some(level) = player.level(&*host_ref)
             {
                 let at = player.entity().position(&*host_ref).unwrap_or([0.0; 3]);
+                begin_rod_scan(&*host_ref, event.player, level, at, event.stack);
                 let _ = level.play_sound(
                     host_ref,
                     "theurgy:tuning_fork",
@@ -1997,6 +2247,72 @@ mod tests {
             Some("minecraft:bucket")
         );
         assert_eq!(bucket_remainder("minecraft:water_bucket"), None);
+    }
+
+    // The scan of a rod reads only what is inside its sphere and the level, a slice a tick.
+    #[test]
+    fn a_rod_scan_covers_its_sphere_column_by_column() {
+        let center = [0.5, 64.0, 0.5];
+        let base = [0, 64, 0];
+        // The middle column of a radius 4 scan runs the full height of the sphere.
+        let side = 9;
+        let middle = 4 * side + 4;
+        assert_eq!(scan_column(center, base, 4, (-64, 319), middle), Some((0, 0, 60, 67)));
+        // A corner column of the square lies outside the sphere, and so does anything past it.
+        assert_eq!(scan_column(center, base, 4, (-64, 319), 0), None);
+        assert_eq!(scan_column(center, base, 4, (-64, 319), side * side), None);
+        // The level's height cuts the column; a sphere wholly above the level has none.
+        assert_eq!(scan_column(center, base, 4, (62, 65), middle), Some((0, 0, 62, 65)));
+        assert_eq!(scan_column(center, base, 4, (-64, 50), middle), None);
+
+        // Every block whose centre is within the radius is read exactly once, and no other.
+        let radius = 6;
+        let mut read = std::collections::HashSet::new();
+        for index in 0..(2 * radius as u32 + 1).pow(2) {
+            if let Some((x, z, first, last)) = scan_column(center, base, radius, (-64, 319), index) {
+                for y in first..=last {
+                    assert!(read.insert([x, y, z]));
+                }
+            }
+        }
+        for x in -8..=8 {
+            for y in 56..=72 {
+                for z in -8..=8 {
+                    let d2 = (f64::from(x) + 0.5 - center[0]).powi(2)
+                        + (f64::from(y) + 0.5 - center[1]).powi(2)
+                        + (f64::from(z) + 0.5 - center[2]).powi(2);
+                    assert_eq!(read.contains(&[x, y, z]), d2 <= f64::from(radius * radius), "{x} {y} {z}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn a_rod_scan_is_spread_over_the_whole_use() {
+        // 193 x 193 columns over the default 40 ticks: no tick reads more than a 40th.
+        let per_tick = scan_columns_per_tick(DIVINATION_MAX_RANGE, 40);
+        assert_eq!(per_tick, 932);
+        assert!(per_tick * 40 >= 193 * 193 && per_tick * 39 < 193 * 193);
+        assert_eq!(scan_columns_per_tick(4, 0), 81);
+    }
+
+    #[test]
+    fn the_nearest_hit_wins_from_where_the_player_stands() {
+        let hits = [[10, 64, 0], [3, 70, 0], [-2, 64, 1]];
+        assert_eq!(nearest_hit(&hits, [0.5, 64.0, 0.5]), Some([-2, 64, 1]));
+        assert_eq!(nearest_hit(&hits, [9.0, 64.0, 0.5]), Some([10, 64, 0]));
+        assert_eq!(nearest_hit(&[], [0.0; 3]), None);
+        assert_eq!(rod_distance([0.5, 64.0, 0.5], None), DIVINATION_NOT_FOUND);
+        // The bucket goes by horizontal distance: straight above is "here".
+        assert_eq!(rod_distance([0.5, 64.0, 0.5], Some([0, 90, 0])), 0.0);
+    }
+
+    #[test]
+    fn wand_names_and_defaults() {
+        assert_eq!(default_side_mode("UP"), 2);
+        assert_eq!(default_side_mode("NORTH"), 1);
+        assert_eq!(next_direction(1), 2);
+        assert_eq!(next_direction(0), 1);
     }
 
     #[test]

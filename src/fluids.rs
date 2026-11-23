@@ -277,6 +277,31 @@ pub fn fill_empty_bucket(
     true
 }
 
+/// `FluidStorageHelper.drain(handler, Integer.MAX_VALUE, null)`: empties every tank of the
+/// apparatus at `pos`. True when anything was drained.
+pub fn void_tanks(host_ref: &mut dyn ServerHost, level: LevelRef, pos: [i32; 3]) -> bool {
+    let Some(tanks) = level.capability(host_ref, &FLUIDS, pos, None) else {
+        return false;
+    };
+    let mut drained = false;
+    for index in 0..tanks.size(host_ref) {
+        let Some(resource) = tanks.resource(host_ref, index) else {
+            continue;
+        };
+        let amount = tanks.amount(host_ref, index);
+        if amount == 0 {
+            continue;
+        }
+        let result = host_ref.transaction(|host_ref, tx| {
+            (tanks.extract(host_ref, tx, index, &resource, amount) == amount)
+                .then_some(())
+                .ok_or(())
+        });
+        drained |= result.is_ok();
+    }
+    drained
+}
+
 #[derive(Clone)]
 struct Accumulation {
     solute: Option<String>,

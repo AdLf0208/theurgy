@@ -13,7 +13,7 @@ const EMITTER: &str = "theurgy:sulfuric_flux_emitter";
 const SOURCE: &str = "theurgy:reformation_source_pedestal";
 const TARGET: &str = "theurgy:reformation_target_pedestal";
 const RESULT: &str = "theurgy:reformation_result_pedestal";
-const FLUX_CAPACITY: i32 = 1_000;
+pub const FLUX_CAPACITY: i32 = 1_000;
 const DEFAULT_TIME: i32 = 100;
 
 fn flux(nbt: &Compound) -> i32 {

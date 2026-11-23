@@ -33,8 +33,13 @@ const PAGE_TOP: f32 = 15.0;
 const PAGE_W: f32 = 124.0;
 const PAGE_H: f32 = 155.0;
 const LINE: f32 = 9.0;
-/// What a page's text column keeps clear of the page's far edge.
-const BODY_MARGIN: f32 = 4.0;
+/// What a page's text column keeps clear of the page's far edge. The column is 124 wide from
+/// the page's left margin, but the page art is not: the spine's ornament and the outer border
+/// begin about 116 in, so a line of the full width (common in languages with long words) ran
+/// into them.
+const BODY_MARGIN: f32 = 10.0;
+/// The widest a page title is drawn before it is shrunk to fit.
+const TITLE_WIDTH: f32 = PAGE_W - BODY_MARGIN;
 const TEXT_RGB: u32 = 0x000000;
 /// BookTextRenderer link colour; ItemLinkRenderer.ITEM_LINK_COLOR.
 const LINK_RGB: u32 = 0x5555FF;
@@ -660,8 +665,6 @@ fn body(c: &mut dyn Canvas, src: &str, at: [f32; 2], w: f32, h: f32, links: &mut
     if src.is_empty() {
         return;
     }
-    // The book font runs wider than the one the page art was drawn for: a line as wide as the
-    // page touches the spine and the page's edge, so lines stop short of both.
     let w = w - BODY_MARGIN;
     let blocks = markdown(src);
     let mut scale = 1.0f32;
@@ -692,7 +695,7 @@ fn body(c: &mut dyn Canvas, src: &str, at: [f32; 2], w: f32, h: f32, links: &mut
     }
 }
 
-/// BookPageRenderer.renderTitle: centred, shrunk past 120 px, optional
+/// BookPageRenderer.renderTitle: centred, shrunk past the page's clear width, optional
 /// separator 12 px below.
 fn title(c: &mut dyn Canvas, s: &str, at: [f32; 2], separator: bool) {
     if !s.is_empty() {
@@ -700,7 +703,7 @@ fn title(c: &mut dyn Canvas, s: &str, at: [f32; 2], separator: bool) {
         inline(s, &mut Fmt::default(), &mut spans);
         let t = styled(&spans, TEXT_RGB, true);
         let w = c.width(&t);
-        let scale = (120.0 / w.max(1.0)).min(1.0);
+        let scale = (TITLE_WIDTH / w.max(1.0)).min(1.0);
         let start = c.mark();
         let y = at[1] + LINE * (1.0 - scale);
         c.text(&t, [at[0] - w * scale / 2.0, y], false);
@@ -845,22 +848,37 @@ fn images(page: &Value) -> Vec<String> {
 
 // ---- category (node) screen ----------------------------------------------
 
-/// GUI pixels per texel of a square-ish backdrop. One repeat spans twice the frame's longer
-/// side at zoom 1 and scales with the map's zoom (0.5 to 1 in the book), so the texture always
-/// covers the frame once and is never tiled inside it; zooming in enlarges it with the nodes.
-fn backdrop_px_per_texel(frame_side: f32, zoom: f32, texture_side: f32) -> f32 {
-    frame_side.max(1.0) * 2.0 * zoom / texture_side.max(1.0)
+/// How far behind the node plane the backdrop sits: it pans at this fraction of the node
+/// plane's world speed and zooms as `zoom^depth`, like a plane further from the camera.
+const BACKDROP_DEPTH: f32 = 0.4;
+/// Lower bound of the map zoom the backdrop is sized for (the wheel stops a bit under 0.5).
+const ZOOM_FLOOR: f32 = 0.4;
+
+fn backdrop_zoom(zoom: f32) -> f32 {
+    zoom.clamp(ZOOM_FLOOR, 1.0).powf(BACKDROP_DEPTH)
 }
 
-/// Splits `length` GUI pixels of a texture `size` wide that repeats, starting
-/// at texel `start`: `[texel, offset, run]` per piece.
-fn tiles(start: f32, size: f32, length: f32) -> Vec<[f32; 3]> {
-    let (mut texel, mut offset, mut out) = (start, 0.0, Vec::new());
-    while offset < length && size >= 1.0 {
-        let run = (size - texel).min(length - offset);
-        out.push([texel, offset, run]);
-        offset += run;
-        texel = 0.0;
+/// Screen rectangle of the whole backdrop texture (`tex` in texels). It shares the node
+/// plane's anchor (`inner size / 2`, the point the nodes zoom about and scroll 0 maps to), so
+/// both planes pan and zoom about the same point. It is sized once so that a single copy
+/// covers the frame at every zoom and scroll: nothing is tiled and no texel outside the
+/// texture is ever sampled.
+fn backdrop_rect(inner: [f32; 4], view: &View, max_scroll: [f32; 2], tex: [f32; 2]) -> [f32; 4] {
+    let zb = backdrop_zoom(view.zoom);
+    let floor = backdrop_zoom(ZOOM_FLOOR);
+    let mut base = 0.0_f32;
+    for a in 0..2 {
+        // Farthest frame edge from the anchor, plus the furthest pan, at backdrop zoom 1.
+        let reach = (inner[2 + a] / 2.0 + inner[a]) / floor + BACKDROP_DEPTH * max_scroll[a].abs() / 2.0;
+        base = base.max(2.0 * reach / tex[a].max(1.0));
+    }
+    let k = base * zb;
+    let mut out = [0.0; 4];
+    for a in 0..2 {
+        let scroll = view.scroll[a].clamp(-max_scroll[a].abs(), max_scroll[a].abs());
+        let center = inner[2 + a] / 2.0 - zb * BACKDROP_DEPTH * scroll / 2.0;
+        out[a] = center - tex[a] * k / 2.0;
+        out[2 + a] = tex[a] * k;
     }
     out
 }
@@ -870,30 +888,22 @@ fn draw_category(c: &mut dyn Canvas, ui: &BookUi, w: f32, h: f32, mouse: [f32; 2
     let [ix, iy, iw, ih] = f.inner;
     let category = &ui.data.categories[ui.category];
     let view = ui.views[ui.category];
-    // Backdrop (the Modonomicon `background`, with no parallax layers in the data): one
-    // texture covers the frame at the map's zoom, so it never shows a seam at the frame
-    // size, and it drifts at half the node scroll speed, which gives the depth behind the map.
+    // Backdrop (the Modonomicon `background`, with no parallax layers in the data): a single
+    // copy of the texture on a plane behind the nodes, see `backdrop_rect`.
     if let Some(bg) = category.get("background").and_then(Value::as_str) {
         let (ns, path) = bg.split_once(':').unwrap_or(("minecraft", bg));
         let name = format!("{ns}:{}", path.trim_start_matches("textures/").trim_end_matches(".png"));
         let (bw, bh) = (num(category, "background_width").max(1.0), num(category, "background_height").max(1.0));
         let [tw, th] = c.size(&name);
         let (kx, ky) = (tw / bw, th / bh);
-        let k = backdrop_px_per_texel(iw.max(ih), view.zoom, bw.max(bh));
-        let u0 = (view.scroll[0] * 0.5 / k).rem_euclid(bw);
-        let v0 = (view.scroll[1] * 0.5 / k).rem_euclid(bh);
-        let mut drawn = true;
-        for [u, x, run_u] in tiles(u0, bw, iw / k) {
-            for [v, y, run_v] in tiles(v0, bh, ih / k) {
-                drawn &= c.sprite(
-                    &name,
-                    [u * kx, v * ky, run_u * kx, run_v * ky],
-                    [ix + x * k, iy + y * k, run_u * k, run_v * k],
-                    WHITE,
-                );
-            }
-        }
-        if !drawn {
+        let max = [num(category, "max_scroll_x"), num(category, "max_scroll_y")];
+        let [rx, ry, rw, _] = backdrop_rect(f.inner, &view, max, [bw, bh]);
+        let k = rw / bw;
+        // The part of the texture under the frame, kept inside the texture.
+        let u = ((ix - rx) / k).clamp(0.0, bw);
+        let v = ((iy - ry) / k).clamp(0.0, bh);
+        let (run_u, run_v) = ((iw / k).min(bw - u), (ih / k).min(bh - v));
+        if !c.sprite(&name, [u * kx, v * ky, run_u * kx, run_v * ky], [ix, iy, run_u * k, run_v * k], WHITE) {
             c.fill(f.inner, 0xFF0B0B1E);
         }
     }
@@ -1154,6 +1164,22 @@ fn slot_item(c: &mut dyn Canvas, items: &[Value], at: [f32; 2], count: i64, salt
     }
 }
 
+/// The item a spotlight page shows: a plain id, or the `id` of a stack.
+fn spotlight_item(page: &Value) -> Option<&str> {
+    page.get("item").and_then(|i| i.as_str().or_else(|| i.get("id").and_then(Value::as_str)))
+}
+
+/// Where `open` keeps the display name of item `id` for the pages titled with it.
+fn item_name_key(id: &str) -> String {
+    format!("item_name:{id}")
+}
+
+/// The language keys an item's name may be under: an item's own, or its block's.
+fn item_name_keys(id: &str) -> [String; 2] {
+    let (namespace, path) = id.split_once(':').unwrap_or(("minecraft", id));
+    [format!("item.{namespace}.{path}"), format!("block.{namespace}.{path}")]
+}
+
 fn result_of(recipe: &Value) -> (Vec<Value>, i64) {
     let result = recipe.get("result");
     let id = result.and_then(|r| r.get("item")).and_then(Value::as_str);
@@ -1169,9 +1195,16 @@ fn draw_page(c: &mut dyn Canvas, ui: &BookUi, side: usize, page: &Value, o: [f32
     let page_title = field(data, page, "title");
     let text_y = match kind {
         "modonomicon:spotlight" => {
-            title(c, page_title, at(62.0, 0.0), false);
+            let id = spotlight_item(page);
+            // BookSpotlightPageRenderer: a page without a title of its own is titled with
+            // the name of the item it shows.
+            let shown = if page_title.is_empty() {
+                id.and_then(|id| data.translations.get(&item_name_key(id))).map_or("", String::as_str)
+            } else {
+                page_title
+            };
+            title(c, shown, at(62.0, 0.0), false);
             theme(c, "content/pages/recipes/spotlight_slot", at(62.0 - 33.0, 10.0), WHITE);
-            let id = page.get("item").and_then(|i| i.as_str().or_else(|| i.get("id").and_then(Value::as_str)));
             if let Some(id) = id {
                 slot_item(c, &[Value::from(id)], at(54.0, 15.0), 1, 0, mouse, hover);
             }
@@ -1556,19 +1589,31 @@ pub fn open(bytes: &[u8], lookup: &dyn Fn(&str) -> Option<String>) -> bool {
     let translations: HashMap<String, String> = json.get("translations").and_then(Value::as_object).map(|t| {
         t.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned()))).collect()
     }).unwrap_or_default();
-    let translations = translations
+    let mut translations: HashMap<String, String> = translations
         .into_iter()
         .map(|(key, english)| {
             let text = lookup(&key).unwrap_or(english);
             (key, text)
         })
         .collect();
+    // Names of the items that spotlight pages without a title are titled with.
+    let entries = list("entries");
+    for page in entries.iter().filter_map(|e| e.get("pages").and_then(Value::as_array)).flatten() {
+        if page.get("type").and_then(Value::as_str) != Some("modonomicon:spotlight") {
+            continue;
+        }
+        if let Some(id) = spotlight_item(page)
+            && let Some(name) = item_name_keys(id).iter().find_map(|key| lookup(key))
+        {
+            translations.insert(item_name_key(id), name);
+        }
+    }
     let research = json.get("research").and_then(Value::as_object).map(|r| {
         r.iter().map(|(node, entries)| {
             (node.clone(), entries.as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect())
         }).collect()
     }).unwrap_or_default();
-    let data = BookData { categories: list("categories"), entries: list("entries"), translations, research };
+    let data = BookData { categories: list("categories"), entries, translations, research };
     if data.categories.is_empty() || data.entries.is_empty() {
         return false;
     }
@@ -1851,7 +1896,9 @@ pub fn scroll(delta: f64) -> bool {
     }).is_some()
 }
 
-/// Dragging the category map: BookCategoryNodeScreen.scroll, 1.5x the drag.
+/// Dragging the category map. Nodes sit at `zoom * (grid - scroll / 2)` on screen, so the
+/// scroll moves by `2 / zoom` per dragged pixel and the map stays under the cursor at every
+/// zoom (Modonomicon's fixed 1.5x lags the cursor); the backdrop follows slower, by its depth.
 pub fn drag(button: i32, delta: [f32; 2]) -> bool {
     with(|ui| {
         if ui.entry.is_some() || ui.list.is_some() || !(button == 0 || button == 1) {
@@ -1861,7 +1908,7 @@ pub fn drag(button: i32, delta: [f32; 2]) -> bool {
         let max = [num(category, "max_scroll_x"), num(category, "max_scroll_y")];
         let view = &mut ui.views[ui.category];
         for k in 0..2 {
-            view.scroll[k] = (view.scroll[k] - delta[k] * 1.5).clamp(-max[k], max[k]);
+            view.scroll[k] = (view.scroll[k] - delta[k] * 2.0 / view.zoom.max(0.1)).clamp(-max[k], max[k]);
         }
     }).is_some()
 }
@@ -1952,22 +1999,59 @@ mod tests {
         blocks.iter().map(|b| b.spans.iter().map(|(s, _)| s.as_str()).collect()).collect()
     }
 
-    // A 512 texture behind a 900 px frame repeats, never stretches.
+    // One copy of the backdrop covers the frame at every zoom and scroll: no tiling, no seams.
+    // A spotlight page with no title of its own is titled with its item's name, which may
+    // be an item's or a block's.
     #[test]
-    fn background_tiles_wrap_at_the_texture_edge() {
-        assert_eq!(tiles(500.0, 512.0, 900.0), [[500.0, 0.0, 12.0], [0.0, 12.0, 512.0], [0.0, 524.0, 376.0]]);
-        assert_eq!(tiles(10.0, 512.0, 100.0), [[10.0, 0.0, 100.0]]);
-        assert!(tiles(0.0, 0.0, 100.0).is_empty());
+    fn spotlight_pages_are_titled_with_their_item() {
+        let plain = mod_api::serde_json::json!({"type": "modonomicon:spotlight", "item": "theurgy:distiller"});
+        let stack = mod_api::serde_json::json!({"item": {"id": "minecraft:coal", "count": 1}});
+        assert_eq!(spotlight_item(&plain), Some("theurgy:distiller"));
+        assert_eq!(spotlight_item(&stack), Some("minecraft:coal"));
+        assert_eq!(item_name_keys("theurgy:distiller"), ["item.theurgy.distiller", "block.theurgy.distiller"]);
+        assert_eq!(item_name_keys("coal"), ["item.minecraft.coal", "block.minecraft.coal"]);
+        assert_eq!(item_name_key("theurgy:distiller"), "item_name:theurgy:distiller");
     }
 
-    // The backdrop covers the frame in one repeat at every zoom the book allows (0.5 to 1).
+    // The text column stays clear of the spine's ornament and the page's outer border.
     #[test]
-    fn backdrop_covers_the_frame_once_at_every_zoom() {
-        for zoom in [0.5_f32, 0.7, 1.0] {
-            let k = backdrop_px_per_texel(900.0, zoom, 512.0);
-            assert!(512.0 * k >= 900.0, "zoom {zoom}: one repeat must span the frame");
+    fn page_text_keeps_clear_of_the_page_art() {
+        assert!(PAGE_W - BODY_MARGIN <= 116.0);
+        assert_eq!(TITLE_WIDTH, PAGE_W - BODY_MARGIN);
+    }
+
+    #[test]
+    fn backdrop_covers_the_frame_at_every_zoom_and_scroll() {
+        let inner = [37.0, 17.0, 886.0, 506.0];
+        for zoom in [0.4_f32, 0.482, 0.7, 1.0] {
+            for sx in [-512.0_f32, 0.0, 512.0] {
+                for sy in [-512.0_f32, 0.0, 512.0] {
+                    let view = View { scroll: [sx, sy], zoom };
+                    let r = backdrop_rect(inner, &view, [512.0, 512.0], [512.0, 512.0]);
+                    assert!(r[0] <= inner[0] && r[1] <= inner[1], "zoom {zoom} scroll {sx},{sy}: {r:?}");
+                    assert!(r[0] + r[2] >= inner[0] + inner[2] && r[1] + r[3] >= inner[1] + inner[3], "{r:?}");
+                }
+            }
         }
-        assert!(backdrop_px_per_texel(900.0, 1.0, 512.0) > backdrop_px_per_texel(900.0, 0.5, 512.0));
+    }
+
+    // The backdrop always moves the same way as the nodes, slower, and zooms less than they do.
+    #[test]
+    fn backdrop_pans_and_zooms_behind_the_nodes() {
+        let inner = [37.0, 17.0, 886.0, 506.0];
+        let at = |scroll: f32, zoom: f32| {
+            let r = backdrop_rect(inner, &View { scroll: [scroll, 0.0], zoom }, [512.0, 512.0], [512.0, 512.0]);
+            (r[0] + r[2] / 2.0, r[2])
+        };
+        for zoom in [0.482_f32, 0.7, 1.0] {
+            let backdrop = at(0.0, zoom).0 - at(100.0, zoom).0;
+            let nodes = zoom * 100.0 / 2.0;
+            assert!(backdrop > 0.0 && backdrop < nodes * 0.7, "zoom {zoom}: {backdrop} vs {nodes}");
+            // Scroll 0 stays on the anchor the nodes zoom about.
+            assert_eq!(at(0.0, zoom).0, inner[2] / 2.0);
+        }
+        let grow = at(0.0, 1.0).1 / at(0.0, 0.5).1;
+        assert!(grow > 1.0 && grow < 2.0);
     }
 
     #[test]

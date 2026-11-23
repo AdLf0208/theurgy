@@ -277,6 +277,19 @@ pub const CALORIC_FLUX_PER_HEAT: i32 = 100;
 pub const CALORIC_HEAT_TARGET_FOR_TICKS: i32 = 20 * 6;
 pub const CALORIC_TICK_INTERVAL: i32 = 20;
 
+/// The mercury flux capacity of a block that stores flux, as its HUD line states it.
+pub fn hud_capacity(block: &str) -> Option<i32> {
+    Some(match block {
+        "theurgy:mercury_catalyst" => CATALYST_CAPACITY,
+        "theurgy:mercury_capacitor" => CAPACITOR_CAPACITY,
+        "theurgy:mercury_flux_emitter" => MERCURY_EMITTER_CAPACITY,
+        "theurgy:caloric_flux_emitter" => CALORIC_CAPACITY,
+        "theurgy:sulfuric_flux_emitter" => crate::reformation::FLUX_CAPACITY,
+        "theurgy:logistics_mercury_flux_connector" => crate::logistics::FLUX_BUFFER_CAPACITY,
+        _ => return None,
+    })
+}
+
 pub fn default_capacitor_side_modes() -> [(FluxDir, SideMode); 6] {
     [
         (FluxDir::Up, SideMode::Output),

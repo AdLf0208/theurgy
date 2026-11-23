@@ -11,6 +11,7 @@ and in `THIRD_PARTY_NOTICES.md`.
 | Theurgy assets and data (`assets/theurgy/`, `data/theurgy/`, `src/data/` geo/animation JSON) | **CC-BY-4.0** | `LICENSE-CC-BY-4.0`, `LICENSES/CC-BY-4.0.txt` |
 | Create-derived filter GUI textures (`assets/theurgy/textures/{item/attribute_filter,item/list_filter,gui/filters,gui/player_inventory,gui/widgets,gui/icons}.png`) | **MIT** (`© 2019 simibubi`) | `.license` sidecar files |
 | Modonomicon 2.19.0 default theme sprites (`assets/theurgy/textures/gui/modonomicon/**`) | **MIT AND CC-BY-4.0** (`© klikli-dev`) | `THIRD_PARTY_NOTICES.md` |
+| CodeDefinedGUI 1.14.0 GUI sprites (`assets/theurgy/textures/gui/codedefinedgui/**`) and its filter screen texts (`codedefinedgui.filter.*` in `assets/theurgy/lang/`) | **CC-BY-4.0** (`© 2026 klikli-dev`) | `THIRD_PARTY_NOTICES.md` |
 | NeoForge 26.3.0.76 `c:` tag definitions (`data/c/**`) | **LGPL-2.1** | `THIRD_PARTY_NOTICES.md` |
 
 Upstream: <https://github.com/klikli-dev/theurgy>.

@@ -8,12 +8,19 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
+use mod_api::text::TextStyle;
 use mod_api::{
-    Compound, Flow, Host, ItemStack, LeftClickBlockEvent, LevelRef, RightClickBlockEvent,
-    ServerHost, Tag,
+    BlockShapeKind, ClientHost, Compound, Flow, Hand, Host, ItemPlace, ItemStack,
+    LeftClickBlockEvent, LevelRef, RightClickBlockEvent, ServerHost, SubmitCustomGeometryEvent,
+    Tag, Text, WorldDepth, WorldLine,
 };
 
-use crate::host;
+use crate::{client, host};
+
+/// Outline colour of a mercury or caloric emitter's target (`*SelectedPoint.color`).
+const FLUX_TARGET_COLOR: u32 = 0xDDC166;
+/// Outline width in pixels; upstream's `Outliner` draws 1/16 of a block.
+const OUTLINE_WIDTH: f32 = 2.5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Emitter {
@@ -27,6 +34,12 @@ struct Pending {
     points: Vec<[i32; 3]>,
     target: Option<[i32; 3]>,
     result: Option<[i32; 3]>,
+}
+
+impl Pending {
+    fn count(&self) -> usize {
+        self.points.len() + usize::from(self.target.is_some()) + usize::from(self.result.is_some())
+    }
 }
 
 static PENDING: OnceLock<Mutex<HashMap<(u128, Emitter), Pending>>> = OnceLock::new();
@@ -88,6 +101,200 @@ pub fn target_accepts(kind: Emitter, block: &str, sneaking: bool) -> bool {
     }
 }
 
+/// Outline and message colour of a selected point (`SulfuricFluxEmitterSelectedPoint.Type`).
+pub fn point_color(kind: Emitter, block: &str) -> u32 {
+    match (kind, pedestal(block)) {
+        (Emitter::Sulfuric, Some("SOURCE")) => 0xFF00FF,
+        (Emitter::Sulfuric, Some("TARGET")) => 0x0000FF,
+        (Emitter::Sulfuric, Some(_)) => 0x008000,
+        _ => FLUX_TARGET_COLOR,
+    }
+}
+
+fn emitter_name(kind: Emitter) -> &'static str {
+    match kind {
+        Emitter::Mercury => "mercury_flux_emitter",
+        Emitter::Caloric => "caloric_flux_emitter",
+        Emitter::Sulfuric => "sulfuric_flux_emitter",
+    }
+}
+
+fn colored(color: &str) -> TextStyle {
+    let mut style = TextStyle::default();
+    style.color = Some(color.to_owned());
+    style
+}
+
+fn block_name(block: &str) -> Text {
+    let (namespace, path) = block.split_once(':').unwrap_or(("minecraft", block));
+    Text::translate(format!("block.{namespace}.{path}"), Vec::new())
+}
+
+fn overlay(host_ref: &mut dyn ServerHost, player_id: u128, message: Text) {
+    if let Some(player) = host_ref.player(player_id) {
+        let _ = player.action_bar(host_ref, message);
+    }
+}
+
+/// `SelectionBehaviour.getModeMessage`: what the emitter will do with the block just selected,
+/// in the point's colour with the block's name in white.
+fn mode_message(kind: Emitter, block: &str) -> Text {
+    Text::translate(
+        "theurgy.behaviour.selection.mode",
+        vec![
+            Text::translate(
+                format!("theurgy.behaviour.selection.mode.{}", emitter_name(kind)),
+                Vec::new(),
+            ),
+            block_name(block).with_style(colored("white")),
+        ],
+    )
+    .with_style(colored(&format!("#{:06X}", point_color(kind, block))))
+}
+
+/// The lang key suffix of `displaySummary` for a sulfuric emitter, by the number of linked
+/// source, target and result pedestals. Upstream sends each complaint in turn to the same
+/// overlay, so the last one that applies is the one shown.
+pub fn sulfuric_summary(sources: usize, targets: usize, results: usize) -> &'static str {
+    if sources + targets + results == 0 {
+        ".no_selection"
+    } else if results == 0 {
+        ".no_result"
+    } else if sources == 0 {
+        ".no_sources"
+    } else if targets == 0 {
+        ".no_target"
+    } else {
+        ""
+    }
+}
+
+/// `displaySummary`: what the placed emitter ended up linked to.
+fn summary_message(host_ref: &dyn Host, level: LevelRef, kind: Emitter, selection: &Pending) -> Text {
+    let key = format!("theurgy.behaviour.selection.summary.{}", emitter_name(kind));
+    let red = colored("red");
+    let white = colored("white");
+    match kind {
+        Emitter::Mercury | Emitter::Caloric => match selection.points.first() {
+            None => Text::translate(format!("{key}.no_selection"), Vec::new()).with_style(red),
+            Some(point) => {
+                let block = host::block_id_at(host_ref, level, *point).unwrap_or_default();
+                Text::translate(key, vec![block_name(&block)]).with_style(white)
+            }
+        },
+        Emitter::Sulfuric => {
+            let counts = [
+                selection.points.len(),
+                usize::from(selection.target.is_some()),
+                usize::from(selection.result.is_some()),
+            ];
+            let suffix = sulfuric_summary(counts[0], counts[1], counts[2]);
+            if !suffix.is_empty() {
+                return Text::translate(format!("{key}{suffix}"), Vec::new()).with_style(red);
+            }
+            let count = |index: usize, color: &str| {
+                Text::literal(counts[index].to_string()).with_style(colored(color))
+            };
+            Text::translate(
+                key,
+                vec![count(0, "dark_purple"), count(1, "blue"), count(2, "green")],
+            )
+            .with_style(white)
+        }
+    }
+}
+
+/// The world-space bounds of the outline shape of the block at `pos` (`shape.bounds().move(pos)`).
+/// None for a block without a shape.
+fn outline_box(host_ref: &dyn Host, level: LevelRef, pos: [i32; 3]) -> Option<[f64; 6]> {
+    let state = level.block_state(host_ref, pos)?;
+    let boxes = level.block_shape(host_ref, state, pos, BlockShapeKind::Outline)?;
+    let bounds = union_bounds(&boxes)?;
+    Some(std::array::from_fn(|i| bounds[i] + f64::from(pos[i % 3])))
+}
+
+/// The smallest box around `boxes` (`VoxelShape.bounds`).
+pub fn union_bounds(boxes: &[[f64; 6]]) -> Option<[f64; 6]> {
+    let mut iter = boxes.iter();
+    let mut out = *iter.next()?;
+    for b in iter {
+        for a in 0..3 {
+            out[a] = out[a].min(b[a]);
+            out[a + 3] = out[a + 3].max(b[a + 3]);
+        }
+    }
+    Some(out)
+}
+
+/// Sends the player's pending points to their client, which outlines them while the emitter
+/// is held (`SelectionBehaviour.prepareRender`).
+fn sync(host_ref: &mut dyn ServerHost, player_id: u128) {
+    let points: Vec<(Emitter, [i32; 3])> = lock_pending()
+        .iter()
+        .filter(|((owner, _), _)| *owner == player_id)
+        .flat_map(|((_, kind), selection)| {
+            selection
+                .points
+                .iter()
+                .chain(&selection.target)
+                .chain(&selection.result)
+                .map(|point| (*kind, *point))
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    let level = host_ref.player(player_id).and_then(|p| p.level(&*host_ref));
+    let mut outlines = Vec::new();
+    if let Some(level) = level {
+        for (kind, point) in points {
+            let Some(block) = host::block_id_at(&*host_ref, level, point) else {
+                continue;
+            };
+            if let Some(bounds) = outline_box(&*host_ref, level, point) {
+                outlines.push((bounds, point_color(kind, &block)));
+            }
+        }
+    }
+    client::send_selection(host_ref, player_id, outlines);
+}
+
+static OUTLINES: Mutex<Vec<([f64; 6], u32)>> = Mutex::new(Vec::new());
+
+/// Client: the outlines the server last sent for this player's pending points.
+pub fn set_outlines(outlines: Vec<([f64; 6], u32)>) {
+    *OUTLINES.lock().unwrap_or_else(|error| error.into_inner()) = outlines;
+}
+
+/// The twelve edges of an axis-aligned box, as `(from, to)` corners.
+pub fn box_edges(b: [f64; 6]) -> [([f64; 3], [f64; 3]); 12] {
+    let corner = |i: usize| [b[(i & 1) * 3], b[1 + ((i >> 1) & 1) * 3], b[2 + ((i >> 2) & 1) * 3]];
+    // Each edge joins two corners that differ in exactly one axis bit.
+    let pairs = [(0, 1), (2, 3), (4, 5), (6, 7), (0, 2), (1, 3), (4, 6), (5, 7), (0, 4), (1, 5), (2, 6), (3, 7)];
+    pairs.map(|(from, to)| (corner(from), corner(to)))
+}
+
+/// Client `submit_custom_geometry`: the coloured outlines of the selected blocks, drawn only
+/// while an emitter is in the main hand.
+pub fn draw_outlines(host_ref: &dyn ClientHost, event: &mut SubmitCustomGeometryEvent<'_>) {
+    let outlines = OUTLINES.lock().unwrap_or_else(|error| error.into_inner()).clone();
+    if outlines.is_empty() {
+        return;
+    }
+    let holding = client::local_hand_stack(host_ref, Hand::Main)
+        .is_some_and(|stack| emitter(host_ref, &stack).is_some());
+    if !holding {
+        return;
+    }
+    let lines: Vec<WorldLine> = outlines
+        .iter()
+        .flat_map(|(bounds, color)| {
+            box_edges(*bounds).map(|(from, to)| {
+                WorldLine::new(from, to, 0xFF00_0000 | color, OUTLINE_WIDTH, WorldDepth::Tested)
+            })
+        })
+        .collect();
+    let _ = event.draw.lines(&lines);
+}
+
 fn pedestal(block: &str) -> Option<&'static str> {
     match block {
         "theurgy:reformation_source_pedestal" => Some("SOURCE"),
@@ -135,55 +342,90 @@ pub fn right_click_block(
     }
 
     let pos = click.pos;
-    let mut pending = lock_pending();
-    let selection = pending.entry((click.player, kind)).or_default();
-    match kind {
-        Emitter::Mercury | Emitter::Caloric => {
-            if selection.points.first() == Some(&pos) {
+    // True when the click selected the block, false when it took a selected block off.
+    let selected = {
+        let mut pending = lock_pending();
+        let selection = pending.entry((click.player, kind)).or_default();
+        match kind {
+            Emitter::Mercury | Emitter::Caloric => {
+                let was = selection.points.first() == Some(&pos);
                 selection.points.clear();
-            } else {
-                selection.points.clear();
-                selection.points.push(pos);
-            }
-        }
-        Emitter::Sulfuric => match sulfuric_type.expect("validated pedestal") {
-            "SOURCE" => {
-                if let Some(index) = selection.points.iter().position(|point| *point == pos) {
-                    selection.points.remove(index);
-                } else {
+                if !was {
                     selection.points.push(pos);
                 }
+                !was
             }
-            "TARGET" => {
-                selection.target = (selection.target != Some(pos)).then_some(pos);
-            }
-            "RESULT" => {
-                selection.result = (selection.result != Some(pos)).then_some(pos);
-            }
-            _ => unreachable!(),
-        },
+            Emitter::Sulfuric => match sulfuric_type.expect("validated pedestal") {
+                "SOURCE" => {
+                    if let Some(index) = selection.points.iter().position(|point| *point == pos) {
+                        selection.points.remove(index);
+                        false
+                    } else {
+                        selection.points.push(pos);
+                        true
+                    }
+                }
+                "TARGET" => {
+                    selection.target = (selection.target != Some(pos)).then_some(pos);
+                    selection.target.is_some()
+                }
+                "RESULT" => {
+                    selection.result = (selection.result != Some(pos)).then_some(pos);
+                    selection.result.is_some()
+                }
+                _ => unreachable!(),
+            },
+        }
+    };
+    // Taking a block off is silent upstream; only a new selection names its mode.
+    if selected {
+        overlay(host_ref, click.player, mode_message(kind, &block));
     }
+    sync(host_ref, click.player);
     event.cancelled = true;
     Flow::Cancel
 }
 
-/// `SelectionBehaviour.tick`: changing the held item abandons pending points.
-pub fn inventory_tick(
-    host_ref: &mut dyn ServerHost,
-    stack: &ItemStack,
-    selected: bool,
-) {
-    if !selected {
+/// `SelectionBehaviour.tick`: a player who no longer holds the emitter abandons its pending
+/// points, and a point whose block stopped being a valid target is dropped (`isValid`).
+pub fn tick(host_ref: &mut dyn ServerHost) {
+    let keys: Vec<(u128, Emitter)> = lock_pending().keys().copied().collect();
+    if keys.is_empty() {
         return;
     }
-    let Some(player) = host_ref.players().acting_player() else {
-        return;
-    };
-    let Some(player_id) = player.entity().uuid(host_ref) else {
-        return;
-    };
-    let current = emitter(&*host_ref, stack);
-    lock_pending().retain(|(owner, kind), _| *owner != player_id || Some(*kind) == current);
+    let mut changed: Vec<u128> = Vec::new();
+    for (player_id, kind) in keys {
+        let held = ItemPlace::PlayerHand { player: player_id, hand: Hand::Main }.stack(host_ref);
+        let holding = held.as_ref().and_then(|stack| emitter(&*host_ref, stack)) == Some(kind);
+        let level = host_ref.player(player_id).and_then(|p| p.level(&*host_ref));
+        let Some(level) = level.filter(|_| holding) else {
+            lock_pending().remove(&(player_id, kind));
+            changed.push(player_id);
+            continue;
+        };
+        let valid = |point: &[i32; 3], wanted: Option<&str>| {
+            host::block_id_at(&*host_ref, level, *point).is_some_and(|block| match kind {
+                Emitter::Mercury => mercury_target(&block),
+                Emitter::Caloric => heat_receiver(&block),
+                Emitter::Sulfuric => pedestal(&block) == wanted,
+            })
+        };
+        let mut pending = lock_pending();
+        let Some(selection) = pending.get_mut(&(player_id, kind)) else {
+            continue;
+        };
+        let before = (selection.points.len(), selection.target, selection.result);
+        selection.points.retain(|point| valid(point, Some("SOURCE")));
+        selection.target = selection.target.filter(|point| valid(point, Some("TARGET")));
+        selection.result = selection.result.filter(|point| valid(point, Some("RESULT")));
+        if before != (selection.points.len(), selection.target, selection.result) {
+            changed.push(player_id);
+        }
+    }
+    changed.dedup();
+    for player_id in changed {
+        sync(host_ref, player_id);
+    }
 }
 
 /// `SelectionBehaviour.onLeftClickBlock`: remove only a previously selected point.
@@ -222,11 +464,28 @@ pub fn left_click_block(
     let sulfuric_type = (kind == Emitter::Sulfuric)
         .then(|| pedestal(&block))
         .flatten();
-    let mut pending = lock_pending();
-    let Some(selection) = pending.get_mut(&(player_id, kind)) else {
-        return Flow::Continue;
+    let removed = {
+        let mut pending = lock_pending();
+        let Some(selection) = pending.get_mut(&(player_id, kind)) else {
+            return Flow::Continue;
+        };
+        remove_point(selection, kind, sulfuric_type, pos)
     };
-    let removed = match kind {
+    if removed {
+        sync(host_ref, player_id);
+        event.cancelled = true;
+        return Flow::Cancel;
+    }
+    Flow::Continue
+}
+
+fn remove_point(
+    selection: &mut Pending,
+    kind: Emitter,
+    sulfuric_type: Option<&str>,
+    pos: [i32; 3],
+) -> bool {
+    match kind {
         Emitter::Mercury | Emitter::Caloric => {
             let found = selection.points.first() == Some(&pos);
             if found {
@@ -244,12 +503,7 @@ pub fn left_click_block(
             Some("RESULT") => selection.result.take_if(|result| *result == pos).is_some(),
             _ => false,
         },
-    };
-    if removed {
-        event.cancelled = true;
-        return Flow::Cancel;
     }
-    Flow::Continue
 }
 
 pub fn closer_than(origin: [i32; 3], point: [i32; 3], range: i32) -> bool {
@@ -319,15 +573,29 @@ pub fn placed(
     let Some(kind) = emitter_id(block_id) else {
         return;
     };
-    let Some(mut selection) = lock_pending().remove(&(player_id, kind)) else {
-        return;
-    };
+    // Placing with nothing selected still reports "has no target", as upstream does.
+    let mut selection = lock_pending().remove(&(player_id, kind)).unwrap_or_default();
     let range = if kind == Emitter::Sulfuric { 16 } else { 8 };
+    let before = selection.count();
     selection
         .points
         .retain(|point| closer_than(pos, *point, range));
     selection.target = selection.target.filter(|point| closer_than(pos, *point, range));
     selection.result = selection.result.filter(|point| closer_than(pos, *point, range));
+    // `SelectionBehaviour.onPlace`: points out of range are dropped and counted; otherwise
+    // the summary says what the emitter is now linked to.
+    let removed = before - selection.count();
+    let message = if removed > 0 {
+        Text::translate(
+            "theurgy.behaviour.selection.outside_range",
+            vec![Text::literal(removed.to_string())],
+        )
+        .with_style(colored("red"))
+    } else {
+        summary_message(&*host_ref, level, kind, &selection)
+    };
+    overlay(host_ref, player_id, message);
+    sync(host_ref, player_id);
 
     let Some(be) = host_ref.block_entity(level, pos) else {
         return;
@@ -383,6 +651,41 @@ mod tests {
         assert!(closer_than([0, 0, 0], [15, 0, 0], 16));
         assert!(!closer_than([0, 0, 0], [16, 0, 0], 16));
         assert!(!closer_than([0, 0, 0], [8, 0, 0], 8));
+    }
+
+    #[test]
+    fn points_are_coloured_by_what_they_are() {
+        assert_eq!(point_color(Emitter::Sulfuric, "theurgy:reformation_source_pedestal"), 0xFF00FF);
+        assert_eq!(point_color(Emitter::Sulfuric, "theurgy:reformation_target_pedestal"), 0x0000FF);
+        assert_eq!(point_color(Emitter::Sulfuric, "theurgy:reformation_result_pedestal"), 0x008000);
+        assert_eq!(point_color(Emitter::Caloric, "theurgy:distiller"), 0xDDC166);
+        assert_eq!(point_color(Emitter::Mercury, "theurgy:mercury_capacitor"), 0xDDC166);
+    }
+
+    #[test]
+    fn sulfuric_summary_names_the_last_missing_part() {
+        assert_eq!(sulfuric_summary(0, 0, 0), ".no_selection");
+        assert_eq!(sulfuric_summary(2, 1, 0), ".no_result");
+        assert_eq!(sulfuric_summary(0, 1, 1), ".no_sources");
+        assert_eq!(sulfuric_summary(0, 0, 1), ".no_sources");
+        assert_eq!(sulfuric_summary(3, 0, 1), ".no_target");
+        assert_eq!(sulfuric_summary(3, 1, 1), "");
+    }
+
+    #[test]
+    fn an_outline_is_the_bounds_of_the_whole_shape() {
+        let boxes = [[0.25, 0.0, 0.25, 0.75, 0.5, 0.75], [0.0, 0.5, 0.0, 1.0, 1.0, 1.0]];
+        assert_eq!(union_bounds(&boxes), Some([0.0, 0.0, 0.0, 1.0, 1.0, 1.0]));
+        assert_eq!(union_bounds(&[]), None);
+        let edges = box_edges([0.0, 0.0, 0.0, 1.0, 2.0, 3.0]);
+        // Every edge runs along exactly one axis, and each axis has four of them.
+        let mut per_axis = [0; 3];
+        for (from, to) in edges {
+            let moved: Vec<usize> = (0..3).filter(|a| from[*a] != to[*a]).collect();
+            assert_eq!(moved.len(), 1, "{from:?} -> {to:?}");
+            per_axis[moved[0]] += 1;
+        }
+        assert_eq!(per_axis, [4, 4, 4]);
     }
 
     #[test]

@@ -5,6 +5,7 @@ pub mod book;
 pub mod client;
 pub mod commands;
 pub mod config;
+pub mod derivative;
 pub mod engine;
 pub mod filter;
 pub mod filter_client;
@@ -13,6 +14,7 @@ pub mod flux;
 pub mod halves;
 pub mod heat;
 pub mod host;
+pub mod hud;
 pub mod incubation;
 pub mod interactions;
 pub mod items;
@@ -31,13 +33,15 @@ use mod_api::{
     self, BlockChangedEvent, ClientHost, ClientTickPostEvent, ComponentTypesEvent, LootDropsEvent,
     EntityPlaceEvent,
     Flow, GuiLayerDrawEvent, Hooks, HostSide, InputKeyEvent, InteractionKeyMappingTriggeredEvent,
-    ItemStack, LeftClickBlockEvent, LevelHost, LivingEntityUseItemFinishEvent, MouseScrollingEvent,
+    ItemStack, LeftClickBlockEvent, LeftClickEmptyEvent, LevelHost, LivingEntityUseItemFinishEvent, MouseScrollingEvent,
     PlayerLoadFromFileEvent, PlayerLoggedInEvent, PlayerSaveToFileEvent, PrepareItemCraftEvent,
-    RegisterCommandsEvent, RegisterFluidModelsEvent, RegisterGuiLayersEvent, Registrar,
+    RegisterCommandsEvent, RegisterFluidModelsEvent, RegisterGuiLayersEvent,
+    RegisterSpecialModelRendererEvent, Registrar,
     RegistrationContext, RightClickBlockEvent, RunModCommandEvent, ScreenCharTypedPreEvent,
     ScreenKeyPressedPreEvent, ScreenMouseButtonPressedPreEvent, ScreenMouseDraggedPreEvent,
     ScreenMouseScrolledPreEvent, ScreenRenderPostEvent, ServerAboutToStartEvent, ServerHost,
-    ServerStoppedEvent, ServerTickEvent, StandaloneModelsEvent, TagsUpdatedEvent,
+    ServerStoppedEvent, ServerTickEvent, StandaloneModelsEvent, SubmitCustomGeometryEvent,
+    TagsUpdatedEvent,
 };
 
 #[derive(Default)]
@@ -65,6 +69,14 @@ impl Hooks for Mod {
         render::standalone_models(event);
     }
 
+    fn register_special_model_renderer(
+        &self,
+        _: &RegistrationContext,
+        event: &mut RegisterSpecialModelRendererEvent<'_>,
+    ) {
+        derivative::register(event);
+    }
+
     fn register_gui_layers(
         &self,
         _: &RegistrationContext,
@@ -79,6 +91,7 @@ impl Hooks for Mod {
         selection::clear();
         logistics::clear();
         items::clear_removed_state();
+        items::clear_rod_scans();
     }
 
     fn tags_updated(&self, host: HostSide<'_>, _: &mut TagsUpdatedEvent) {
@@ -90,6 +103,8 @@ impl Hooks for Mod {
     fn server_tick(&self, host: &mut dyn ServerHost, _: &mut ServerTickEvent) {
         client::drain_local_actions(host);
         items::drain_support_checks(host);
+        items::tick_rod_scans(host);
+        selection::tick(host);
     }
 
     fn block_changed(&self, level: &dyn LevelHost, event: &mut BlockChangedEvent) {
@@ -102,6 +117,7 @@ impl Hooks for Mod {
         selection::clear();
         logistics::clear();
         items::clear_removed_state();
+        items::clear_rod_scans();
     }
 
     fn player_load_from_file(
@@ -161,7 +177,10 @@ impl Hooks for Mod {
         host: &mut dyn ServerHost,
         event: &mut LeftClickBlockEvent,
     ) -> Flow {
-        selection::left_click_block(host, event)
+        if matches!(selection::left_click_block(host, event), Flow::Cancel) {
+            return Flow::Cancel;
+        }
+        items::wand_left_click(host, event)
     }
 
     fn living_entity_use_item_finish(
@@ -224,12 +243,25 @@ impl Hooks for Mod {
         probe::run(host, event)
     }
 
+    fn submit_custom_geometry(
+        &self,
+        host: &dyn ClientHost,
+        event: &mut SubmitCustomGeometryEvent<'_>,
+    ) {
+        selection::draw_outlines(host, event);
+        render::draw_trails(event);
+    }
+
+    fn left_click_empty(&self, host: &mut dyn ClientHost, _: &mut LeftClickEmptyEvent) {
+        client::left_click_empty(host);
+    }
+
     fn client_tick_post(&self, host: &mut dyn ClientHost, _: &mut ClientTickPostEvent) {
         client::client_tick_post(host);
     }
 
     fn gui_layer_draw(&self, host: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'_>) {
-        client::gui_layer_draw(host, event);
+        hud::gui_layer_draw(host, event);
     }
 
     fn input_key(&self, host: &mut dyn ClientHost, event: &mut InputKeyEvent<'_>) {

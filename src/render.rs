@@ -4,7 +4,7 @@
 //! - `DigestionVatRenderer` vanilla model parts
 //! - `LiquefactionCauldron`, `SalAmmoniacTank`, `SalAmmoniacAccumulator` fluid quads
 //! - Copper wire curves (`engine::wire`), reformation trails, held-stack fit outlines
-//! - Vessel & pedestal floating items, bounding boxes, update tags, standalone atlas models
+//! - Bounding boxes, update tags, standalone atlas models
 
 use std::collections::HashMap;
 use std::sync::{LazyLock, Mutex, OnceLock};
@@ -13,7 +13,8 @@ use mod_api::serde_json::{self, Value};
 use mod_api::{
     BlockEntityDrawContext, BlockEntityRenderBoundingBoxEvent, BlockEntitySubmitEvent,
     BlockEntityUpdateTagEvent, BlockState, ClientHost, Compound, CubeFace, Host,
-    ItemDisplayContext, ItemStack, ModBlockEntity, ModBlockEntityView, StandaloneModelsEvent, Tag,
+    ModBlockEntity, ModBlockEntityView, StandaloneModelsEvent, SubmitCustomGeometryEvent, Tag,
+    WorldDepth, WorldQuad,
 };
 
 use crate::engine::recipes::Tank;
@@ -1199,18 +1200,6 @@ fn state_prop(host_ref: &dyn Host, state: BlockState, key: &str) -> Option<Strin
     host::parse_state_property(&s, key).map(str::to_owned)
 }
 
-fn client_stack(host_ref: &dyn Host, entity: &ModBlockEntity) -> Option<ItemStack> {
-    let Tag::List(items) = entity.nbt.get(&"Items".into())? else {
-        return None;
-    };
-    for item in items {
-        if let Some(stack) = filter::stack_from_template(host_ref, item) {
-            return Some(stack);
-        }
-    }
-    None
-}
-
 fn digestion_has_output(host_ref: &dyn Host, entity: &ModBlockEntity) -> bool {
     if entity.items.get(3).is_some_and(Option::is_some) {
         return true;
@@ -1409,38 +1398,122 @@ fn draw_wire(pos: [i32; 3], entity: &ModBlockEntity, draw: &mut dyn BlockEntityD
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_reformation_trail(
-    draw: &mut dyn BlockEntityDrawContext,
-    origin: [i32; 3],
-    from: [f64; 3],
-    to: [f64; 3],
-    start: [f32; 3],
-    end: [f32; 3],
-    phase: f32,
-) {
-    let face = Some(CubeFace::new("theurgy:block/distiller").with_uv([0.0, 0.0, 16.0, 16.0]));
-    for step in 0..=12 {
-        let t = (step as f32 / 12.0 + phase).fract();
-        let color = reformation::trail_color(start, end, t);
-        let packed = (((color[0].clamp(0.0, 1.0) * 255.0) as u32) << 16)
-            | (((color[1].clamp(0.0, 1.0) * 255.0) as u32) << 8)
-            | (color[2].clamp(0.0, 1.0) * 255.0) as u32;
-        let half = 0.12;
-        let from_texels = std::array::from_fn(|axis| {
-            ((from[axis] + (to[axis] - from[axis]) * f64::from(t)
-                - f64::from(origin[axis])
-                - half)
-                * 16.0) as f32
-        });
-        let to_texels = std::array::from_fn(|axis| {
-            ((from[axis] + (to[axis] - from[axis]) * f64::from(t)
-                - f64::from(origin[axis])
-                + half)
-                * 16.0) as f32
-        });
-        let _ = draw.cube(from_texels, to_texels, [face; 6], packed);
+/// One glowing mote of a reformation trail, in world space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Glow {
+    pub at: [f64; 3],
+    pub color: [f32; 3],
+}
+
+/// Motes along one leg of a trail.
+const TRAIL_MOTES: usize = 12;
+/// Radius of a mote's halo, in blocks (upstream's `GlowTrailProjectile.size(0.1f)`).
+const GLOW_RADIUS: f64 = 0.1;
+/// Ticks a trail stays drawn after its emitter last submitted it.
+const TRAIL_LIFE: i64 = 3;
+
+/// The motes of one leg from `from` to `to`, flowing with `phase` (0 to 1) and blending from
+/// `start` to `end` (`GlowTrailProjectile.colors`).
+pub fn trail_glows(from: [f64; 3], to: [f64; 3], start: [f32; 3], end: [f32; 3], phase: f32) -> Vec<Glow> {
+    (0..TRAIL_MOTES)
+        .map(|step| {
+            let t = (step as f32 / TRAIL_MOTES as f32 + phase).fract();
+            Glow {
+                at: std::array::from_fn(|axis| from[axis] + (to[axis] - from[axis]) * f64::from(t)),
+                color: reformation::trail_color(start, end, t),
+            }
+        })
+        .collect()
+}
+
+/// The trails of the emitters in view, by emitter position, with the game time they were
+/// submitted at. A block entity's draw context has only lit, textured geometry; the glows are
+/// drawn from here as unlit blended world geometry (`draw_trails`).
+static TRAILS: LazyLock<Mutex<HashMap<[i32; 3], (i64, Vec<Glow>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// The four corners of a square of half side `half` around `center` that faces `camera`:
+/// upright, or stood on a corner when `diamond`.
+pub fn billboard(center: [f64; 3], camera: [f64; 3], half: f64, diamond: bool) -> [[f64; 3]; 4] {
+    let mut look: [f64; 3] = std::array::from_fn(|a| center[a] - camera[a]);
+    let length = look.iter().map(|v| v * v).sum::<f64>().sqrt();
+    if length < 1.0e-9 {
+        look = [0.0, 0.0, 1.0];
+    } else {
+        look = look.map(|v| v / length);
     }
+    // Right is across the view and the world's up; straight up or down has no such axis.
+    let mut right = [look[2], 0.0, -look[0]];
+    let across = (right[0] * right[0] + right[2] * right[2]).sqrt();
+    right = if across < 1.0e-6 { [1.0, 0.0, 0.0] } else { right.map(|v| v / across) };
+    let up = [
+        right[1] * look[2] - right[2] * look[1],
+        right[2] * look[0] - right[0] * look[2],
+        right[0] * look[1] - right[1] * look[0],
+    ];
+    let corner = |r: f64, u: f64| -> [f64; 3] {
+        std::array::from_fn(|a| center[a] + (right[a] * r + up[a] * u) * half)
+    };
+    if diamond {
+        let reach = std::f64::consts::SQRT_2;
+        [corner(0.0, reach), corner(-reach, 0.0), corner(0.0, -reach), corner(reach, 0.0)]
+    } else {
+        [corner(-1.0, 1.0), corner(-1.0, -1.0), corner(1.0, -1.0), corner(1.0, 1.0)]
+    }
+}
+
+fn argb(alpha: f32, color: [f32; 3]) -> u32 {
+    let channel = |v: f32| (v.clamp(0.0, 1.0) * 255.0) as u32;
+    (channel(alpha) << 24) | (channel(color[0]) << 16) | (channel(color[1]) << 8) | channel(color[2])
+}
+
+/// A mote as blended quads: a wide faint halo, a tighter one and a bright core.
+pub fn glow_quads(glow: &Glow, camera: [f64; 3]) -> Vec<WorldQuad> {
+    let white = |amount: f32| glow.color.map(|c| c + (1.0 - c) * amount);
+    [
+        (1.0, 0.10, 0.0, false),
+        (1.0, 0.10, 0.0, true),
+        (0.6, 0.22, 0.2, false),
+        (0.6, 0.22, 0.2, true),
+        (0.28, 0.85, 0.6, false),
+    ]
+    .into_iter()
+    .map(|(size, alpha, whiten, diamond)| {
+        WorldQuad::new(
+            billboard(glow.at, camera, GLOW_RADIUS * size, diamond),
+            argb(alpha, white(whiten)),
+            WorldDepth::Tested,
+        )
+    })
+    .collect()
+}
+
+/// Client `submit_custom_geometry`: the reformation trails as glowing motes.
+pub fn draw_trails(event: &mut SubmitCustomGeometryEvent<'_>) {
+    let now = event.view.game_time;
+    let glows: Vec<Glow> = {
+        let Ok(mut trails) = TRAILS.lock() else {
+            return;
+        };
+        trails.retain(|_, (seen, _)| (now - *seen).abs() <= TRAIL_LIFE);
+        trails.values().flat_map(|(_, glows)| glows.iter().copied()).collect()
+    };
+    if glows.is_empty() {
+        return;
+    }
+    let room = {
+        let usage = event.draw.usage();
+        usage.quad_capacity.saturating_sub(usage.quads) as usize
+    };
+    let mut quads: Vec<WorldQuad> = Vec::new();
+    for glow in &glows {
+        let mote = glow_quads(glow, event.view.camera);
+        if quads.len() + mote.len() > room {
+            break;
+        }
+        quads.extend(mote);
+    }
+    let _ = event.draw.quads(&quads);
 }
 
 fn draw_reformation(
@@ -1479,44 +1552,28 @@ fn draw_reformation(
     let target_from =
         std::array::from_fn(|axis| f64::from(target[axis]) + 0.5 + if axis == 1 { 0.5 } else { 0.0 });
     let phase = (draw.game_time().rem_euclid(40) as f32 + draw.partial()) / 40.0;
-    let old_light = draw.light();
-    draw.set_light(0xF0F0);
-    draw_reformation_trail(
-        draw,
-        pos,
-        emitter,
-        target_from,
-        [1.0, 1.0, 1.0],
-        [0.0, 0.0, 1.0],
-        phase,
-    );
+    // `GlowTrailProjectile`'s three legs and colours: emitter to target, target to each
+    // source, each source to the result.
+    let mut glows = trail_glows(emitter, target_from, [1.0, 1.0, 1.0], [0.0, 0.0, 1.0], phase);
+    let result_to: [f64; 3] = std::array::from_fn(|axis| {
+        f64::from(result[axis]) + 0.5 + if axis == 1 { 0.7 } else { 0.0 }
+    });
     for source in sources {
-        let source_from = std::array::from_fn(|axis| {
+        let source_from: [f64; 3] = std::array::from_fn(|axis| {
             f64::from(source[axis]) + 0.5 + if axis == 1 { 0.7 } else { 0.0 }
         });
-        draw_reformation_trail(
-            draw,
-            pos,
-            target_from,
-            source_from,
-            [0.0, 0.0, 1.0],
-            [1.0, 0.0, 1.0],
-            phase,
-        );
-        let result_to = std::array::from_fn(|axis| {
-            f64::from(result[axis]) + 0.5 + if axis == 1 { 0.7 } else { 0.0 }
-        });
-        draw_reformation_trail(
-            draw,
-            pos,
+        glows.extend(trail_glows(target_from, source_from, [0.0, 0.0, 1.0], [1.0, 0.0, 1.0], phase));
+        glows.extend(trail_glows(
             source_from,
             result_to,
             [2.0 / 3.0, 8.0 / 255.0, 2.0 / 3.0],
             [0.0, 1.0, 0.0],
             phase,
-        );
+        ));
     }
-    draw.set_light(old_light);
+    if let Ok(mut trails) = TRAILS.lock() {
+        trails.insert(pos, (draw.game_time(), glows));
+    }
 }
 
 fn draw_held_fit(
@@ -1702,22 +1759,6 @@ pub fn submit(host_ref: &dyn ClientHost, event: &mut BlockEntitySubmitEvent<'_>)
         };
         submit_fluid_quads(draw, sprite, &bs, inset);
     }
-
-    if matches!(
-        block,
-        "theurgy:incubator_mercury_vessel"
-            | "theurgy:incubator_salt_vessel"
-            | "theurgy:incubator_sulfur_vessel"
-            | "theurgy:reformation_source_pedestal"
-            | "theurgy:reformation_target_pedestal"
-            | "theurgy:reformation_result_pedestal"
-    ) && let Some(stack) = client_stack(host_ref, entity)
-    {
-        draw.push();
-        draw.translate([0.5, 1.25, 0.5]);
-        let _ = draw.item(&stack, ItemDisplayContext::Fixed, None, 0);
-        draw.pop();
-    }
 }
 
 pub fn bounds(event: &mut BlockEntityRenderBoundingBoxEvent<'_>) {
@@ -1841,6 +1882,41 @@ mod tests {
             face(&faces, "down").uv,
             [texel(85.0), texel(6.0), texel(91.0), texel(0.0)]
         );
+    }
+
+    #[test]
+    fn a_trail_is_motes_flowing_from_one_end_to_the_other() {
+        let glows = trail_glows([0.0, 0.0, 0.0], [12.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 1.0], 0.0);
+        assert_eq!(glows.len(), TRAIL_MOTES);
+        assert_eq!(glows[0], Glow { at: [0.0, 0.0, 0.0], color: [1.0, 1.0, 1.0] });
+        assert!((glows[6].at[0] - 6.0).abs() < 1.0e-6);
+        // Half a cycle later every mote is half the leg further on, wrapping at its end.
+        let later = trail_glows([0.0, 0.0, 0.0], [12.0, 0.0, 0.0], [1.0, 1.0, 1.0], [0.0, 0.0, 1.0], 0.5);
+        assert!((later[0].at[0] - 6.0).abs() < 1.0e-6);
+        assert!((later[6].at[0] - 0.0).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn a_glow_faces_the_camera() {
+        let center = [10.0, 64.0, -3.0];
+        for camera in [[10.0, 64.0, 5.0], [2.0, 70.0, -9.0], [10.0, 80.0, -3.0]] {
+            for diamond in [false, true] {
+                let corners = billboard(center, camera, 0.1, diamond);
+                let look: [f64; 3] = std::array::from_fn(|a| center[a] - camera[a]);
+                for corner in corners {
+                    // Every corner lies in the plane through the centre across the line of sight.
+                    let offset: [f64; 3] = std::array::from_fn(|a| corner[a] - center[a]);
+                    let along: f64 = (0..3).map(|a| offset[a] * look[a]).sum();
+                    assert!(along.abs() < 1.0e-9, "{camera:?}: {corner:?}");
+                    let reach = offset.iter().map(|v| v * v).sum::<f64>().sqrt();
+                    assert!((reach - 0.1 * std::f64::consts::SQRT_2).abs() < 1.0e-9);
+                }
+            }
+        }
+        let quads = glow_quads(&Glow { at: center, color: [0.0, 0.0, 1.0] }, [0.0, 64.0, 0.0]);
+        assert_eq!(quads.len(), 5);
+        // Halo first, faint; the core last, nearly opaque.
+        assert!(quads[0].color >> 24 < 0x40 && quads[4].color >> 24 > 0xC0);
     }
 
     #[test]

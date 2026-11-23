@@ -3,6 +3,7 @@
   "item": true,
   "properties": {
     "hardness": 1,
+    "occludes": false,
     "explosion_resistance": 1,
     "requires_tool": false,
     "sounds": "minecraft:copper_block"
