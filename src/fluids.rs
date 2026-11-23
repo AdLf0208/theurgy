@@ -7,9 +7,9 @@
 
 use mod_api::serde_json::Value;
 use mod_api::{
-    Direction, FLUIDS, FluidKey, FluidModel, FluidResource, FluidStack, Host, HostTransaction,
-    ItemPlace, ItemResource, ItemStack, LevelRef, ModBlockEntityView, RegisterFluidModelsEvent,
-    ResourceHandler, ServerHost, Transaction,
+    Direction, FLUIDS, FluidKey, FluidModel, FluidResource, FluidStack, Hand, Host,
+    HostTransaction, ItemPlace, ItemResource, ItemStack, LevelRef, ModBlockEntityView, PlayerRef,
+    RegisterFluidModelsEvent, ResourceHandler, ServerHost, Transaction, fluid_util,
 };
 
 use crate::engine::recipes::Tank;
@@ -225,6 +225,56 @@ impl ResourceHandler<FluidResource> for SalAmmoniacBucket {
             _ => 0,
         }
     }
+}
+
+/// An empty vanilla bucket in `player`'s `hand` takes one bucket of sal ammoniac out of the tanks
+/// of the block at `pos` as `side` reaches them. The game's own `ITEM_FLUIDS` of an empty bucket
+/// fills with vanilla fluids only, so `fluid_util::interact_with_fluid_handler` moves nothing
+/// here. All of it or nothing; true when the bucket was filled.
+pub fn fill_empty_bucket(
+    host_ref: &mut dyn ServerHost,
+    player: PlayerRef,
+    hand: Hand,
+    level: LevelRef,
+    pos: [i32; 3],
+    side: Option<Direction>,
+) -> bool {
+    let place = ItemPlace::PlayerHand {
+        player: player.uuid(),
+        hand,
+    };
+    let Some(fluid) = host_ref.fluid_key(SAL_AMMONIAC) else {
+        return false;
+    };
+    let bucket = SalAmmoniacBucket { place, fluid };
+    if !bucket.holds_item(host_ref, EMPTY_BUCKET) {
+        return false;
+    }
+    let Some(tanks) = level.capability(host_ref, &FLUIDS, pos, side) else {
+        return false;
+    };
+    let held = (0..tanks.size(host_ref)).find_map(|index| {
+        let resource = tanks.resource(host_ref, index)?;
+        (bucket.accepts(&resource) && tanks.amount(host_ref, index) >= BUCKET)
+            .then_some((index, resource))
+    });
+    let Some((index, resource)) = held else {
+        return false;
+    };
+    let filled = host_ref.transaction(|host_ref, tx| {
+        if tanks.extract(host_ref, tx, index, &resource, BUCKET) != BUCKET
+            || bucket.exchange(host_ref, tx, BUCKET_ITEM) != BUCKET
+        {
+            return Err(());
+        }
+        Ok(())
+    });
+    if filled.is_err() {
+        return false;
+    }
+    let at = pos.map(|c| f64::from(c) + 0.5);
+    fluid_util::trigger_sound_and_game_event(host_ref, &resource, level, at, Some(player), true);
+    true
 }
 
 #[derive(Clone)]

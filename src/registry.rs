@@ -10,9 +10,9 @@ use mod_api::{
     BlockEntityTicksEvent, BlockEntityUpdateTagEvent, BlockPart, BlockSignalEvent, BlockState,
     CanSurviveEvent, ClientHost, Compound, ExpDropEvent, FLUIDS, FluidResource,
     HasAnalogOutputEvent,
-    Host, ITEM_FLUIDS, ITEMS, InteractionResult, IsSignalSourceEvent, LevelHost, LevelSide,
-    LevelTicksHost, ModContainer, ModEnergyBuffer, ModFluidTanks, OnDestroyedByPlayerEvent,
-    ParticleKey, Registrar, ResourceHandler, ServerHost, StateForPlacementEvent, Tag,
+    Host, ITEM_FLUIDS, ITEMS, InteractionResult, IsSignalSourceEvent, LevelHost, LevelRandomHost,
+    LevelSide, LevelTicksHost, ModContainer, ModEnergyBuffer, ModFluidTanks, OnDestroyedByPlayerEvent,
+    ParticleKey, PreRemoveSideEffectsEvent, Registrar, ResourceHandler, ServerHost, StateForPlacementEvent, Tag,
     UpdateShapeEvent, UseItemOnEvent, UseWithoutItemEvent,
 };
 
@@ -326,7 +326,9 @@ impl BlockPart for TheurgyBlockPart {
         host: &mut dyn ServerHost,
         event: &mut UseWithoutItemEvent<'_>,
     ) -> Option<InteractionResult> {
-        interactions::use_without_item(host, event)
+        // A pass, not the game's own answer: the furnace the double-high apparatus are declared
+        // from would open its menu ("... is not available yet").
+        interactions::use_without_item(host, event).or(Some(InteractionResult::Pass))
     }
 
     fn is_signal_source(&self, level: &dyn LevelHost, event: &mut IsSignalSourceEvent) {
@@ -368,6 +370,7 @@ impl BlockEntityPart for TheurgyBlockPart {
                 level.block_property(&*host_ref, pos, "half").as_deref() == Some("upper")
             })
         {
+            halves::hand_down(host_ref, &id, pos, &mut event.entity);
             return;
         }
         match id.as_str() {
@@ -407,18 +410,23 @@ impl BlockEntityPart for TheurgyBlockPart {
             }
             _ => {}
         }
-        if matches!(
-            id.as_str(),
-            "theurgy:digestion_vat"
-                | "theurgy:incubator_mercury_vessel"
-                | "theurgy:incubator_salt_vessel"
-                | "theurgy:incubator_sulfur_vessel"
-                | "theurgy:reformation_source_pedestal"
-                | "theurgy:reformation_target_pedestal"
-                | "theurgy:reformation_result_pedestal"
-        ) {
+        // Every apparatus holding items: the client's renderers and its HUD read them from the
+        // update tag.
+        if container(&id).is_some() {
             render::mirror_client_items(&*host_ref, &mut event.entity);
         }
+    }
+
+    fn pre_remove_side_effects(
+        &self,
+        _: &mut dyn LevelRandomHost,
+        event: &mut PreRemoveSideEffectsEvent<'_>,
+    ) {
+        items::remember_removed(
+            event.entity.id(),
+            [event.pos.x, event.pos.y, event.pos.z],
+            &event.entity.nbt,
+        );
     }
 
     fn block_entity_update_tag(

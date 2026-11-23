@@ -78,6 +78,7 @@ impl Hooks for Mod {
         machines::clear_signals();
         selection::clear();
         logistics::clear();
+        items::clear_removed_state();
     }
 
     fn tags_updated(&self, host: HostSide<'_>, _: &mut TagsUpdatedEvent) {
@@ -100,6 +101,7 @@ impl Hooks for Mod {
         machines::clear_signals();
         selection::clear();
         logistics::clear();
+        items::clear_removed_state();
     }
 
     fn player_load_from_file(
@@ -141,7 +143,10 @@ impl Hooks for Mod {
             HostSide::Client(host) => {
                 let sneaking = host.is_key_down("key.keyboard.left.shift")
                     || host.is_key_down("key.keyboard.right.shift");
-                interactions::client_right_click(&*host, event, sneaking);
+                if interactions::client_right_click(&*host, event, sneaking) {
+                    event.cancelled = true;
+                    return Flow::Cancel;
+                }
                 Flow::Continue
             }
         }

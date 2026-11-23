@@ -33,6 +33,8 @@ const PAGE_TOP: f32 = 15.0;
 const PAGE_W: f32 = 124.0;
 const PAGE_H: f32 = 155.0;
 const LINE: f32 = 9.0;
+/// What a page's text column keeps clear of the page's far edge.
+const BODY_MARGIN: f32 = 4.0;
 const TEXT_RGB: u32 = 0x000000;
 /// BookTextRenderer link colour; ItemLinkRenderer.ITEM_LINK_COLOR.
 const LINK_RGB: u32 = 0x5555FF;
@@ -658,6 +660,9 @@ fn body(c: &mut dyn Canvas, src: &str, at: [f32; 2], w: f32, h: f32, links: &mut
     if src.is_empty() {
         return;
     }
+    // The book font runs wider than the one the page art was drawn for: a line as wide as the
+    // page touches the spine and the page's edge, so lines stop short of both.
+    let w = w - BODY_MARGIN;
     let blocks = markdown(src);
     let mut scale = 1.0f32;
     let mut lines;

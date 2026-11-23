@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
+use mod_api::client::hud_layout::PoseOp;
 use mod_api::serde_json;
 use mod_api::text::TextStyle;
 use mod_api::{
@@ -310,6 +311,8 @@ enum BookOp {
         text: Text,
         at: [f32; 2],
         shadow: bool,
+        /// The glyphs' own scale about `at` (`scale_since`).
+        scale: f32,
     },
     PushClip([f32; 4]),
     PopClip,
@@ -343,6 +346,29 @@ fn book_text(runs: &[book::Run]) -> Text {
     out.unwrap_or_else(|| Text::literal(String::new()))
 }
 
+/// One line of book text: at its own size, or under a pose scaled about its top left, so a page
+/// shrunk to fit (`scale_since`) shrinks its glyphs with its line positions.
+fn book_text_draws(text: Text, at: [f32; 2], shadow: bool, scale: f32) -> Vec<GuiDraw> {
+    let line = |x: i32, y: i32| GuiDraw::Text {
+        text: text.clone(),
+        x,
+        y,
+        color: 0xFFFF_FFFF,
+        shadow,
+    };
+    if (scale - 1.0).abs() < 1e-3 {
+        return vec![line(at[0].round() as i32, at[1].round() as i32)];
+    }
+    vec![
+        GuiDraw::Push(vec![
+            PoseOp::Translate(at[0], at[1]),
+            PoseOp::Scale(scale, scale),
+        ]),
+        line(0, 0),
+        GuiDraw::Pop,
+    ]
+}
+
 impl BookCanvas<'_> {
     fn flush(self, draw: &mut dyn DrawContext) {
         let host = self.host;
@@ -368,14 +394,13 @@ impl BookCanvas<'_> {
                     }
                 }
                 BookOp::Fill { rect, argb } => draw.fill(rect, argb),
-                BookOp::Text { text, at, shadow } => {
-                    let _ = draw.gui_paint(&[GuiDraw::Text {
-                        text,
-                        x: at[0].round() as i32,
-                        y: at[1].round() as i32,
-                        color: 0xFFFF_FFFF,
-                        shadow,
-                    }]);
+                BookOp::Text {
+                    text,
+                    at,
+                    shadow,
+                    scale,
+                } => {
+                    let _ = draw.gui_paint(&book_text_draws(text, at, shadow, scale));
                 }
                 BookOp::PushClip(rect) => {
                     let _ = draw.push_clip(rect);
@@ -427,6 +452,7 @@ impl book::Canvas for BookCanvas<'_> {
             text: book_text(runs),
             at,
             shadow,
+            scale: 1.0,
         });
     }
 
@@ -471,8 +497,11 @@ impl book::Canvas for BookCanvas<'_> {
                     let p = scale_pt([rect[0], rect[1]]);
                     *rect = [p[0], p[1], rect[2] * scale, rect[3] * scale];
                 }
-                BookOp::Text { at, .. } => {
+                BookOp::Text {
+                    at, scale: glyphs, ..
+                } => {
                     *at = scale_pt(*at);
+                    *glyphs *= scale;
                 }
                 _ => {}
             }
@@ -871,6 +900,10 @@ pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'
     if !settings.enable_item_hud || host_ref.hud_mode() != HudMode::AllVisible {
         return;
     }
+    // Not behind the book, the filter or the recipe screen.
+    if host_ref.mod_screen().is_some() {
+        return;
+    }
     const NAME: u32 = 0xFFE7_D59A;
     const LINE: u32 = 0xFFFF_FFFF;
     let mut lines: Vec<(String, u32)> = Vec::new();
@@ -927,6 +960,16 @@ pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'
                         stacks.push(stack);
                     }
                 }
+                // A client's copy has no slots of its own: the server mirrors them into `Items`.
+                if stacks.is_empty()
+                    && let Some(Tag::List(items)) = nbt.get(&"Items".into())
+                {
+                    stacks.extend(
+                        items
+                            .iter()
+                            .filter_map(|item| filter::stack_from_template(host_ref, item)),
+                    );
+                }
             }
         }
     }
@@ -935,16 +978,17 @@ pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'
     }
     let scale = settings.hud_scale.clamp(0.25, 3.0);
     let gui_width = event.draw.size()[0];
-    let char_width = 6.0 * scale;
+    // Glyphs are drawn under a pose scaled by `scale`, so a line is its font width times it.
+    let widths: Vec<f32> = lines
+        .iter()
+        .map(|(text, _)| event.draw.text_width(text) * scale)
+        .collect();
     let line_height = 10.0 * scale;
     let stack_size = 16.0 * scale;
     let stack_step = 18.0 * scale;
     let pad = 3.0 * scale;
     let top = 4.0 * scale;
-    let widest = lines
-        .iter()
-        .map(|(text, _)| text.chars().count() as f32 * char_width)
-        .fold(0.0_f32, f32::max);
+    let widest = widths.iter().copied().fold(0.0_f32, f32::max);
     let row_width = stacks.len() as f32 * stack_step;
     let box_width = widest.max(row_width) + 2.0 * pad;
     let text_height = lines.len() as f32 * line_height;
@@ -956,16 +1000,24 @@ pub fn gui_layer_draw(host_ref: &dyn ClientHost, event: &mut GuiLayerDrawEvent<'
         0x7800_0000,
     );
     for (index, (text, colour)) in lines.iter().enumerate() {
-        let width = text.chars().count() as f32 * char_width;
-        event.draw.text(
-            text,
-            [
-                centre - width / 2.0,
-                top + pad + index as f32 * line_height,
-            ],
-            *colour,
-            false,
-        );
+        let at = [
+            centre - widths[index] / 2.0,
+            top + pad + index as f32 * line_height,
+        ];
+        let _ = event.draw.gui_paint(&[
+            GuiDraw::Push(vec![
+                PoseOp::Translate(at[0], at[1]),
+                PoseOp::Scale(scale, scale),
+            ]),
+            GuiDraw::Text {
+                text: Text::literal(text.clone()),
+                x: 0,
+                y: 0,
+                color: *colour,
+                shadow: false,
+            },
+            GuiDraw::Pop,
+        ]);
     }
     let row_left = centre - row_width / 2.0;
     for (index, stack) in stacks.iter().enumerate() {

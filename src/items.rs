@@ -3,6 +3,7 @@
 //! directional attachment survival, divination rods, mercurial wand, copper
 //! wire helpers, nexus UUIDs, crafting attunement, and full tooltip parity.
 
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -310,6 +311,18 @@ pub fn uuid_text(host_ref: &dyn Host, stack: &ItemStack) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// The four-int form of a UUID written as `8-4-4-4-12` hex digits, the inverse of `uuid_text`.
+pub fn uuid_tag(text: &str) -> Option<Tag> {
+    let groups: Vec<&str> = text.split('-').collect();
+    if groups.iter().map(|g| g.len()).collect::<Vec<_>>() != [8, 4, 4, 4, 12] {
+        return None;
+    }
+    let value = u128::from_str_radix(&groups.concat(), 16).ok()?;
+    Some(Tag::IntArray(
+        (0..4).rev().map(|n| (value >> (32 * n)) as u32 as i32).collect(),
+    ))
 }
 
 fn next_uuid_tag(seed_extra: u64) -> Tag {
@@ -1833,34 +1846,80 @@ pub fn carried_components(nbt: &Compound) -> Vec<(&'static str, Tag)> {
         }
     }
     if let Some(Tag::String(id)) = nbt.get(&"nexusId".into()) {
-        out.push(("theurgy:logistics_nexus_id", Tag::String(id.clone())));
+        // The item keeps a UUID as its four ints, as a crafted nexus has it, so a dropped nexus
+        // stacks with its untouched pair.
+        let text = id.to_string_lossy();
+        out.push((
+            "theurgy:logistics_nexus_id",
+            uuid_tag(&text).unwrap_or_else(|| Tag::String(id.clone())),
+        ));
     }
     out
 }
 
+/// What a removed block entity carries into its own drop, by position: the block and its
+/// components. `loot_drops` of a player's break runs once the block entity is gone, so
+/// `pre_remove_side_effects` leaves its state here on the way out.
+type Carried = (String, Vec<(&'static str, Tag)>);
+static REMOVED_STATE: Mutex<Option<HashMap<[i32; 3], Carried>>> = Mutex::new(None);
+
+/// Forget every removed block entity's state (a server starting or stopping).
+pub fn clear_removed_state() {
+    if let Ok(mut removed) = REMOVED_STATE.lock() {
+        *removed = None;
+    }
+}
+
+/// `BlockEntityPart::pre_remove_side_effects`: remember what the block entity leaving `pos`
+/// carries into its drop, or forget what an earlier one there left when it carries nothing.
+pub fn remember_removed(block: &str, pos: [i32; 3], nbt: &Compound) {
+    let carried = carried_components(nbt);
+    let Ok(mut removed) = REMOVED_STATE.lock() else {
+        return;
+    };
+    if carried.is_empty() {
+        if let Some(map) = removed.as_mut() {
+            map.remove(&pos);
+        }
+    } else {
+        removed
+            .get_or_insert_with(HashMap::new)
+            .insert(pos, (block.to_owned(), carried));
+    }
+}
+
+fn take_removed(block: &str, pos: [i32; 3]) -> Option<Vec<(&'static str, Tag)>> {
+    let (owner, carried) = REMOVED_STATE.lock().ok()?.as_mut()?.remove(&pos)?;
+    (owner == block).then_some(carried)
+}
+
 /// `Hooks::loot_drops`: the item a broken apparatus drops keeps the state its block entity held.
-/// Only the drops of the block's own item are touched, and only for a block whose entity holds
-/// such state (the block entity is still there while the block's loot is rolled).
+/// Only the drops of the block's own item are touched. An explosion rolls the loot while the
+/// block entity still stands; a player's break rolls it after the removal, from what
+/// `remember_removed` kept.
 pub fn loot_drops(host_ref: &mut dyn ServerHost, event: &mut LootDropsEvent<'_>) {
-    let Some((pos, _state)) = event.context.block else {
+    let Some((pos, state)) = event.context.block else {
         return;
     };
-    let Some(level) = host_ref.level(event.context.dimension) else {
-        return;
-    };
-    let Some(block) = host::block_id_at(&*host_ref, level, pos) else {
+    let Some(block) = host_ref
+        .block_state_string(state)
+        .and_then(|s| s.split('[').next().map(str::to_owned))
+    else {
         return;
     };
     if !block.starts_with("theurgy:") {
         return;
     }
-    let Some(be) = host_ref.block_entity(level, pos) else {
-        return;
+    let live = host_ref
+        .level(event.context.dimension)
+        .filter(|level| host::block_id_at(&*host_ref, *level, pos).as_deref() == Some(&*block))
+        .and_then(|level| host_ref.block_entity(level, pos))
+        .and_then(|be| be.data(&*host_ref))
+        .map(|nbt| carried_components(&nbt));
+    let carried = match live {
+        Some(carried) => carried,
+        None => take_removed(&block, pos).unwrap_or_default(),
     };
-    let Some(nbt) = be.data(&*host_ref) else {
-        return;
-    };
-    let carried = carried_components(&nbt);
     if carried.is_empty() {
         return;
     }
@@ -2006,6 +2065,11 @@ mod tests {
         assert!(carried.contains(&("theurgy:mercury_flux_storage", Tag::Int(20_560))));
         assert!(carried.contains(&("theurgy:mercury_flux_to_convert", Tag::Int(7))));
         assert!(carried.contains(&("theurgy:logistics_nexus_id", Tag::String("pair".into()))));
+        assert_eq!(
+            uuid_tag("3c07ab98-ee96-481c-a250-3cab1f69b0b7"),
+            Some(Tag::IntArray(vec![1007135640, -292141028, -1571799893, 527020215]))
+        );
+        assert_eq!(uuid_tag("pair"), None);
         assert_eq!(carried.len(), 3);
         assert!(carried_components(&Compound::new()).is_empty());
     }

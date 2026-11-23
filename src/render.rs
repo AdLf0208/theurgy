@@ -296,11 +296,15 @@ pub fn mirror_client_items(host_ref: &dyn Host, entity: &mut ModBlockEntityView<
             Some(Tag::Compound(record))
         })
         .collect();
-    if items.is_empty() {
-        entity.nbt.remove(&"Items".into());
-    } else {
-        entity.nbt.insert("Items".into(), Tag::List(items));
+    // Written only when it changes: a write marks the block entity changed.
+    let next = (!items.is_empty()).then_some(Tag::List(items));
+    if entity.nbt.get(&"Items".into()) == next.as_ref() {
+        return;
     }
+    match next {
+        Some(items) => entity.nbt.insert("Items".into(), items),
+        None => entity.nbt.remove(&"Items".into()),
+    };
 }
 
 /// Client update tag (`block_entity_update_tag`): includes mirrored `Items`
