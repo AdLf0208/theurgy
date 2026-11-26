@@ -1,10 +1,11 @@
 {
   "values": [
-    "minecraft:amethyst_shard",
-    "minecraft:diamond",
-    "minecraft:emerald",
-    "minecraft:lapis_lazuli",
-    "minecraft:prismarine_crystals",
-    "minecraft:quartz"
+    "#c:gems/amethyst",
+    "#c:gems/diamond",
+    "#c:gems/emerald",
+    "#c:gems/lapis",
+    "#c:gems/prismarine",
+    "#c:gems/quartz",
+    "#c:gems/sal_ammoniac"
   ]
 }

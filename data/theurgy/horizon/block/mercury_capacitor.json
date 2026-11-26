@@ -1,0 +1,18 @@
+{
+  "template": "minecraft:glass",
+  "item": true,
+  "properties": {
+    "hardness": 1,
+    "explosion_resistance": 1,
+    "requires_tool": false,
+    "sounds": "minecraft:iron_block"
+  },
+  "state_properties": {
+    "enabled": {
+      "type": "boolean"
+    }
+  },
+  "default_state": {
+    "enabled": "true"
+  }
+}

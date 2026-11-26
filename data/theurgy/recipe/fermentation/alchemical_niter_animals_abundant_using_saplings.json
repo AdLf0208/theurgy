@@ -1,0 +1,16 @@
+{
+  "type": "theurgy:fermentation",
+  "category": "misc",
+  "fluid": {
+    "amount": 125,
+    "ingredient": "minecraft:water"
+  },
+  "ingredients": [
+    "#theurgy:alchemical_sulfurs/animals/abundant",
+    "#minecraft:saplings"
+  ],
+  "result": {
+    "id": "theurgy:alchemical_niter_animals_abundant"
+  },
+  "time": 200
+}

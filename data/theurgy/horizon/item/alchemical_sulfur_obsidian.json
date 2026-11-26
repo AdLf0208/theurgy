@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:obsidian",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_obsidian",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_obsidian.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
+  }
+}

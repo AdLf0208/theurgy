@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_chile_pepper",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_chile_pepper.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

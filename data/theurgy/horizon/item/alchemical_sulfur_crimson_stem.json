@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:crimson_stem",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_crimson_stem",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_crimson_stem.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

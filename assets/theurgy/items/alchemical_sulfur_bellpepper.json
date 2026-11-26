@@ -1,0 +1,10 @@
+{
+  "model": {
+    "type": "minecraft:special",
+    "base": "theurgy:item/empty_jar_icon",
+    "model": {
+      "type": "theurgy:alchemical_derivative",
+      "jar": "theurgy:item/empty_jar_icon"
+    }
+  }
+}

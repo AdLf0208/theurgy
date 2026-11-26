@@ -1,0 +1,15 @@
+{
+  "type": "theurgy:liquefaction",
+  "category": "misc",
+  "ingredient": "#c:raw_materials/iron",
+  "result": {
+    "type": "theurgy:item",
+    "count": 3,
+    "id": "theurgy:alchemical_sulfur_iron"
+  },
+  "solvent": {
+    "amount": 10,
+    "ingredient": "theurgy:sal_ammoniac"
+  },
+  "time": 100
+}

@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_trumpet",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_trumpet.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

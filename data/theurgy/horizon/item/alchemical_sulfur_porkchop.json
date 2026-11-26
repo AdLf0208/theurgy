@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:porkchop",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_porkchop",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_porkchop.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

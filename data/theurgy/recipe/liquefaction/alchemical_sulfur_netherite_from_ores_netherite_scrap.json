@@ -1,0 +1,14 @@
+{
+  "type": "theurgy:liquefaction",
+  "category": "misc",
+  "ingredient": "#c:ores/netherite_scrap",
+  "result": {
+    "type": "theurgy:item",
+    "id": "theurgy:alchemical_sulfur_netherite"
+  },
+  "solvent": {
+    "amount": 100,
+    "ingredient": "theurgy:sal_ammoniac"
+  },
+  "time": 100
+}

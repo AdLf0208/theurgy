@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:mangrove_log",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_mangrove_log",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_mangrove_log.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

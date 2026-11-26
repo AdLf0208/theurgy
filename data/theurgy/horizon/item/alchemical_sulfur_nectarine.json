@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_nectarine",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_nectarine.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

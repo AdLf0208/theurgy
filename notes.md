@@ -584,3 +584,138 @@ and `SELFTEST=1` inverts the expectation and ends `FAIL` + `EXIT:1` (`e2e-dialec
 Package 0.2.3: **63,629 B**, SHA-256 `9e2d1543215a32116a2ecc7f435da10390498f2c986657ce030ddeb849f33805`.
 
 Skills: superpowers/using-superpowers,systematic-debugging,test-driven-development,verification-before-completion; BeautifulRust/none (no Rust change)
+
+---
+
+## Full SDK port (0.3.0, branch `full-port`)
+
+Ported the complete Theurgy 1.120.1 mod from `theurgy-horizon` (`horizon/26.3`, legacy `.hnmod` / `horizon-mixin.toml`) into the flat SDK layout (`api = "0.2"`, pinned Horizon `0a875da91dbb0fdcb7ba8c42c11341aa229af51a`, mixins `e59da9094f0c2fdda6c627fe9eff22dec6a906f0`).
+
+### Decisions applied (§3 defaults)
+
+1. Replaced 1.78.0 content with 1.120.1 (26.3) content; asset license is CC-BY-4.0 (code MIT), with `LICENSES/`, `THIRD_PARTY_NOTICES.md`, and updated `LICENSE-NOTICE.md`. `REUSE.toml` is omitted from the package root because `horizon-mod-package` rejects extra root `.toml` files.
+2. Replaced `src/runtime.rs` and `src/support.rs` with data-driven reload-stable recipes (`src/recipes.rs`) and the full modular SDK implementation; updated `AGENTS.md`.
+3. Removed obsolete 1.78.0 jar generator scripts (`assemble_content.py`, `gen_recipes.py`, `gen_tag_members.py`, `recipes.json`, `tag_members.json`, `dialect-proof.json`).
+4. Package version bumped to `0.3.0`; machines use the full 1.120.1 declarations (`half=lower|upper`, etc.).
+5. Rebuilt deterministic `theurgy.hmod` and updated `RECEIPT.md`.
+
+### Transfer map of all 29 source glue files
+
+| Source file (`theurgy-horizon/native/theurgy/`) | Target in `theurgy` | Status |
+|---|---|---|
+| `book.rs` | `src/book.rs` | Ported (compiles, unit tests pass, not verified in-game) |
+| `bootstrap.rs` | `src/lib.rs` + `horizon-mod.toml` | Replaced by `#[mod_api::horizon_mod]` |
+| `client.rs` | `src/client.rs` | Ported with typed payloads, key mappings, HUD layer, `BookCanvas` |
+| `config.rs` | `src/config.rs` | Ported |
+| `filter.rs` | `src/filter.rs` | Ported (command + server payload handler + filter engine) |
+| `filter_client.rs` | `src/filter_client.rs` | Ported over `DrawContext` + typed `FilterEditPayload` |
+| `filtered_fluid_transfer.rs` | `src/logistics.rs` + `src/filter.rs` | Replaced by `mod_api::FLUIDS` + `move_resources` |
+| `filtered_transfer.rs` | `src/logistics.rs` + `src/filter.rs` | Replaced by `mod_api::ITEMS` + `move_resources` |
+| `fluids.rs` | `src/fluids.rs` + `data/theurgy/horizon/fluid/sal_ammoniac.json` | Ported; world fluid uses native SDK world-fluid simulation |
+| `flux.rs` | `src/flux.rs` | Ported (+ `block_energy` FE buffer on `mercury_flux_emitter`) |
+| `heat.rs` | `src/heat.rs` | Ported |
+| `host.rs` | `src/host.rs` | Ported + shared SDK helpers |
+| `incubation.rs` | `src/incubation.rs` | Ported with transactional vessel consumption |
+| `interactions.rs` | `src/interactions.rs` | Ported on `BlockPart::use_item_on` / `use_without_item` + `fluid_util` |
+| `items.rs` | `src/items.rs` | Ported on `ItemPart` + `BlockPart` + hooks |
+| `logistics.rs` | `src/logistics.rs` | Ported with live node index + transactional `ITEMS`/`FLUIDS` transfers |
+| `machines.rs` | `src/machines.rs` | Ported with reload-stable recipe cache + vat signal cache |
+| `model_data.rs` | `src/model_data.rs` | Ported verbatim (`.rs` packed in `.hmod`) |
+| `portal.rs` | `src/render.rs` (fallback) | Gap — see §8 table below |
+| `probe.rs` | `src/probe.rs` | Ported (`theurgy_probe`, `theurgy_state`) |
+| `recipe_client.rs` | `src/recipe_client.rs` | Ported over `DrawContext` + `ClientHost::recipes_of_type` |
+| `reformation.rs` | `src/reformation.rs` | Ported with transactional pedestal commits |
+| `registry.rs` | `src/registry.rs` | Ported on `Registrar` + `TheurgyBlockPart` (29 BEs, 30 components) |
+| `render.rs` | `src/render.rs` | Ported on `BlockEntityPart::block_entity_submit` / `bounds` / `update_tag` |
+| `sal_fluid.rs` | `data/theurgy/horizon/fluid/sal_ammoniac.json` + `Hooks::register_fluid_models` | Replaced by native SDK fluid models (zero mesher mixin) |
+| `selection.rs` | `src/selection.rs` | Ported |
+| `special_attributes.rs` | `src/filter.rs` | Folded into `AttributeRule` (all 4 rules) |
+| `standard_attributes.rs` | `src/filter.rs` | Folded into `StandardKind` (all 14 rules) |
+| `worldgen.rs` | `data/theurgy/worldgen/{feature,placed_feature}/sal_ammoniac_ore.json` + `declare_biome_modifier` | Replaced by native 26.3 data-driven ore generation |
+
+Plus pure engine core: `native/theurgy/engine/src/*.rs` → `src/engine/{mod,crafting,machines,recipes,wire,performance}.rs` (all 30 engine tests pass unchanged).
+
+### Deviations from `theurgy-horizon` (`fdc87ae`)
+
+- **Worldgen placement**: `sal_ammoniac_ore` now uses Horizon's native 26.3 `minecraft:ore` feature + `placed_feature` + `declare_biome_modifier` instead of a manual `chunk_load` RNG implementation. Exact block coordinates at seed 0 may differ from `scenarios/worldgen.mjs`'s hardcoded 17/17 Java positions depending on Horizon's feature sorter index; verify in-game once a launcher build is available.
+- **Sal ammoniac world fluid**: Declared via `data/theurgy/horizon/fluid/sal_ammoniac.json` + `Hooks::register_fluid_models` instead of a water-template block + `block_spread`/`block_changed` water-conversion hack + `Mesher::mesh_reusing` mixin. The flowing fluid registry id is `theurgy:flowing_sal_ammoniac` (Horizon's `FluidLook::flowing_id` convention), added to `data/theurgy/tags/fluid/sal_ammoniac.json`.
+- **Filter UI & wand mode networking**: Client edits and wand mode changes use typed `PayloadCodec` C2S payloads (`theurgy:filter_edit`, `theurgy:wand_mode`) instead of chat command injection or direct client inventory writes.
+- **Reformation trail client check**: On the client, `draw_reformation` draws trails for all selected `sourcePedestals` while the emitter is processing rather than inspecting each source pedestal's client block entity map directly.
+- **Sturdy-face emitter survival**: `Hooks::block_changed` detects neighbor edits adjacent to flux emitters and drains authoritative `LevelRef::block_face_sturdy(..., SupportType::Full)` + `LevelRef::destroy_block` checks on `server_tick` (so `/setblock` floating emitters stay intact until a neighbor changes, while weakening support to a non-sturdy block such as `oak_slab` breaks and drops the emitter).
+
+### Gaps (§8)
+
+| Подсистема | Чего нет в API | Что сделано взамен | Hook request (да/нет) |
+|---|---|---|---|
+| `portal.rs` (`logistics_nexus` Portal bone) | `BlockEntityDrawContext` не имеет метода для `END_PORTAL_LAYER` (`rendertype_end_portal`) квадов | На грани кости `Portal` рисуется тёмный квад `block/obsidian` с тинтом `0x201040` (`src/render.rs`; прошёл `render.mjs` IoU ≥ 0.85) | да (опциональный `BlockEntityDrawContext::end_portal_quad`) |
+| `book.rs` (`scale_since` для текста) | `DrawContext` / `GuiDraw` не имеет произвольной 2D-матрицы масштабирования для произвольных `DrawContext` вызовов | Позиции и размеры спрайтов/предметов/заливок масштабируются в `BookCanvas::scale_since`; текст сохраняет масштабированную позицию (`book.mjs` 65/65 PASS) | нет (косметично) |
+| Lint-утилиты / Java differential | В bundled toolchain нет `cargo-clippy`/`rustfmt`; отдельный Java NeoForge сервер для `differential-*.mjs` не поднимался | Проверено `RUSTFLAGS="-D warnings" cargo test --all-targets --offline`, сборка release без предупреждений, `build`/`check`/`fits` и все 34 живых игровых сценария | нет (ограничение локального окружения) |
+
+### In-game bugs caught and fixed during live verification on Horizon `0a875da`
+
+1. **Recipe serializers (`src/registry.rs`)**: Horizon `0a875da` requires `register_raw_recipe_serializer` alongside `register_recipe_type` for all 9 custom recipe families (namespaced `theurgy:<type>`).
+2. **Worldgen ore schema (`data/theurgy/worldgen/feature/sal_ammoniac_ore.json`)**: 26.3 `horizon-world` expects `"id"` (not 1.21 `"Name"`) in `targets[].state`.
+3. **Component removal without tombstone (`src/items.rs`)**: `ItemStack::remove(&RawComponent(id))` removes component overrides cleanly instead of inserting `"!id": {}` via `apply_components`.
+4. **Flux connector buffer sync (`src/flux.rs`, `src/logistics.rs`)**: `insert_mercury_flux_at` updates both `mercuryFluxHandler` and `buffer`, and `read_state` reconciles both fields so incoming flux is never wiped on tick.
+5. **Creative-mode hand shrink (`src/logistics.rs`, `src/interactions.rs`)**: `ItemPlace::PlayerHand.extract` intentionally preserves creative hands; apparatus input insertion and filter insertion now shrink the player slot directly, matching Java's `stack.shrink()`.
+6. **Client hand reads (`src/client.rs`, `src/filter_client.rs`, `src/render.rs`)**: `PlayerRef::inventory_slots` is server-only; switched client hand reads to `host_ref.living(player.entity())?.hand_item(host_ref, hand)`.
+7. **Screen opening & singleplayer C2S payloads (`src/items.rs`, `src/client.rs`, `src/lib.rs`)**: Handled `HostSide::Client` in `ItemPart::use_item` for Hermetica/filter screens, accepted `is_key_down` Shift + `scroll`/`accumulated` in `mouse_scrolling`, and added a `server_tick` local-action fallback when `ToServer::send` returns `Disconnected`.
+8. **Emitter support survival (`src/items.rs`, `src/lib.rs`)**: Moved sturdy-face checks (`level.block_face_sturdy`) to `block_changed` -> `server_tick` so neighbor weakening (e.g. `oak_slab`) breaks and drops emitters while `/setblock`-placed floating fixtures remain intact.
+9. **Incubator mid-craft input replacement (`src/incubation.rs`)**: Added non-zero 3-vessel signature tracking in `entity.data[9]` so external vessel edits restart the timer while save/reload and self-consumption do not.
+10. **Common tags (`data/c/tags/{item/gems,item/ores,block/ores}.json`)**: Restored vanilla `#c:gems/*` and `#c:ores/*` members alongside `#c:*/sal_ammoniac` so vanilla gems and ores work in calcination and `/theurgy recipe`.
+
+### Verification status (0.3.0)
+
+| Check | Result | Notes |
+|---|---|---|
+| `RUSTFLAGS="-D warnings" cargo test --all-targets --offline` | **112 passed**, 0 failed, 0 warnings | Pure engine (30) + all subsystem unit tests (82) |
+| `rm -f Cargo.lock && cargo horizon-mod build` (twice) | **5,611,100 B**, SHA-256 `e452bbd5ca7b…1a55`, `cmp` identical | Deterministic build |
+| `cargo horizon-mod check ./theurgy.hmod` | **exit 0** | `theurgy 0.3.0 (native-mod, format native-1/0a875da…/e59da90…, for 26.3)` |
+| `cargo horizon-mod fits ./theurgy.hmod --build 0a875da` | **exit 0** | `0a875da  made for` |
+| Static audit (`native_*`, `todo!`, `unimplemented!`, forbidden dirs) | **0 matches** | Clean SDK layout, 0 mixins, 0 release warnings |
+| In-game headless scenarios (24 suites + `/theurgy` cmds) | **24/24 PASS** | `all` (70), `interactions` (39), `fluids` (81), `vat-interactions` (83), `reformation` (131), `flux` (33), `incubation-chaos` (7), `items` (16), `tools` (35), `divination` (28), `logistics` (32), `logistics-advanced` (116), `wire-graph` (65), `filters` (24), `filter-matching` (144), `standard-attributes` (295), `special-attributes` (95), `attribute-filters` (91), `content-rules` (16), `worldgen` (16), `config-attunement` (10), `persistence` (30), `review-fixes` (128), `/theurgy` cmds |
+| In-game Vulkan GPU GUI scenarios (10 suites) | **10/10 PASS** | `render` (203 — all 11 GeckoLib/apparatus silhouettes + reformation trails), `wire-render` (21), `sal-fluid` (23), `book` (65), `filter-ui` (37), `wand` (45), `recipes` (13), `tooltips` (20), `client` (15), `client-features` (37), `item-icons` (13) |
+| `cargo clippy` / `cargo fmt --check` | **not run** | Binaries not shipped in bundled launcher Rust 1.99.1 |
+| Java NeoForge `differential-*.mjs` | **not run** | No separate live Java NeoForge server in environment |
+
+## Second bug list (2026-11-23)
+
+Upstream read for behaviour: `klikli-dev/theurgy` `release/v26.3-1.120.1` and
+`klikli-dev/code-defined-gui` `release/v26.3-1.14.0` (the library whose filter menus Theurgy opens).
+
+| # | Cause | Fix |
+|---|---|---|
+| 1 rod freeze | `scan_rod` read the whole 193^3 cube in `finish_using`, with a string id and a tag `Vec` built per block | `RodScan` (`items.rs`): targets resolved once to `BlockKey`s, only the columns inside the sphere and the level, `scan_columns_per_tick` columns per server tick from the use's start, the rest at the end (`ScanManager.finishScan`) |
+| 2 tank void | `interact_empty_hand` had no fluid branch, and returned early for a block with no item slots (the tank) | sneaking empty hand on a tank block that is not a vat: `fluids::void_tanks` |
+| 3 selection feedback | none was written | mode line, placement summary / out-of-range line on the action bar; outline boxes computed on the server (`block_shape` is server-only) and sent in `theurgy:selection`, drawn in `submit_custom_geometry`; pending points now also drop when the emitter leaves the hand or a block stops being a target (`selection::tick`) |
+| 4 wand messages | none was written | action bar line per mode; `ItemHUD` at the bottom left with current -> new; left click lowers the frequency (`theurgy:wand_frequency` for a click at nothing); the double step on a block is gone (the server click answers `Success`, and the client cancels its own item use) |
+| 5 filter GUI | placeholder screen | `filter_client.rs` rewritten after CodeDefinedGUI's screens; one `commit` action carries the draft; the inventory is read from the player's inventory menu (a client is not told `slot_backing`, so the 46-slot layout is used) |
+| 6 tool wear | the hook removed the partner half with a shape update, which removed the clicked half too, so the game's own removal found air | lower half: partner removed with `KNOWN_SHAPE`; upper half: answer `Some(true)` once the cascade removed it; the lower half drops only when the break harvests |
+| 7 trail | cubes textured with a GeckoLib atlas | motes as blended world quads (`render::draw_trails`) |
+| 8 floating items | drawn at full block size | removed (upstream draws none) |
+| 9 jar labels | a GUI-only decoration | special item model `theurgy:alchemical_derivative` (`derivative.rs`) |
+| 10 HUD | read the client's stale block entity copy | `hud.rs`: server snapshot on request every 5 ticks, upstream's lines |
+| 11 Hermetica | text column 120 wide against page art clear for about 116; spotlight title missing | `BODY_MARGIN` 10; spotlight pages titled with the item's name; the backdrop is one copy of its texture (no tiling, so no seam) |
+| 12 floor under the distiller | `distiller` and `calcination_oven` sit on the furnace template and did not declare `occludes: false`, so the floor's top face under them was culled | declared |
+
+Limits that stay:
+
+- **Item tags of the attribute filter.** The mod API has no "tags of this item" read, so the
+  reference item is tested against `data/theurgy/filter_item_tags.json` (vanilla's and this
+  package's 576 item tags). A tag only another mod declares is not offered.
+- **The filter screen is the mod's own screen, not a container menu.** Stacks are picked as
+  ghosts from the shown inventory; nothing is carried for real. The draft names inventory slots
+  and kept entries, never stacks, so the server builds the filter from its own data.
+- **A jar's source item is drawn with the plain model(s) its item definition names**, at the
+  label's place; a source drawn by code (a chest, a banner) shows the label without it, and a
+  block source shows unrotated (upstream draws it with its GUI transform).
+- **Holding Shift over a jar in a slot** draws the source item over the jar; upstream shows the
+  source alone (a special model renderer here answers once per stack, not per frame).
+- **Chat over the book** was not reproduced (see `RECEIPT.md`).
+
+Testing in the game without the launcher's CLI: `native/build.log` holds the exact `rustc` call
+of the `prebuilt-api` route. Staging the package with the launcher's generated
+`staged/theurgy/src/__horizon_entry.rs` (and the two lines it appends to `lib.rs`), compiling
+with that call, and replacing `horizon_theurgy.dll` plus `horizon-native-mods/theurgy/{assets,data}`
+in a copy of the installed `native-0a875da-*` version (and the library's sha256 in its
+`native-mods.json`) gives a game with the working tree in about 15 seconds.

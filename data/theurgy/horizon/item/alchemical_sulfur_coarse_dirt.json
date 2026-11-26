@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:coarse_dirt",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_coarse_dirt",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_coarse_dirt.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

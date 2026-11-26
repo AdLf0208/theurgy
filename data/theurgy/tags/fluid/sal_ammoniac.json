@@ -1,0 +1,10 @@
+{
+  "values": [
+    "theurgy:sal_ammoniac",
+    "theurgy:flowing_sal_ammoniac",
+    {
+      "id": "theurgy:sal_ammoniac_flowing",
+      "required": false
+    }
+  ]
+}

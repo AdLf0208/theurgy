@@ -1,0 +1,11 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_niter_animals_abundant",
+      "with": [
+        {"translate": "item.theurgy.alchemical_niter_animals_abundant.source"}
+      ]
+    }
+  }
+}

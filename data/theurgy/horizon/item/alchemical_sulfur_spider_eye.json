@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:spider_eye",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_spider_eye",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_spider_eye.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

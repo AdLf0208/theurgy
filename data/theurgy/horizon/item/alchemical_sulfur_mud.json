@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:mud",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_mud",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_mud.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

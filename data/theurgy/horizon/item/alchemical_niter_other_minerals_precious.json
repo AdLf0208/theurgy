@@ -1,0 +1,11 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_niter_other_minerals_precious",
+      "with": [
+        {"translate": "item.theurgy.alchemical_niter_other_minerals_precious.source"}
+      ]
+    }
+  }
+}

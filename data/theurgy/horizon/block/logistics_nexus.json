@@ -1,0 +1,38 @@
+{
+  "template": "minecraft:glass",
+  "item": true,
+  "properties": {
+    "hardness": 0.1,
+    "explosion_resistance": 1,
+    "requires_tool": false,
+    "sounds": "minecraft:copper_block"
+  },
+  "state_properties": {
+    "up": {
+      "type": "boolean"
+    },
+    "down": {
+      "type": "boolean"
+    },
+    "north": {
+      "type": "boolean"
+    },
+    "south": {
+      "type": "boolean"
+    },
+    "east": {
+      "type": "boolean"
+    },
+    "west": {
+      "type": "boolean"
+    }
+  },
+  "default_state": {
+    "up": "false",
+    "down": "false",
+    "north": "false",
+    "south": "false",
+    "east": "false",
+    "west": "false"
+  }
+}

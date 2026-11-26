@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_silver",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_silver.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.rare"}
+      ]
+    }
+  }
+}

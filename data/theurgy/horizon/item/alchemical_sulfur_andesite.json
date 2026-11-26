@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:andesite",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_andesite",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_andesite.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

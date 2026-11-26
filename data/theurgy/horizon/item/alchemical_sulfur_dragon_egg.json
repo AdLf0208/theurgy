@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:dragon_egg",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_dragon_egg",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_dragon_egg.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.precious"}
+      ]
+    }
+  }
+}

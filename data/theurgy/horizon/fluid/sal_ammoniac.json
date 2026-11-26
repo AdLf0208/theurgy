@@ -1,0 +1,11 @@
+{
+  "sprite": "theurgy:block/sal_ammoniac/still",
+  "tint": 4294902015,
+  "world": {
+    "tick_delay": 5,
+    "drop_off": 1,
+    "slope_find_distance": 4,
+    "source_conversion": false,
+    "bucket": true
+  }
+}

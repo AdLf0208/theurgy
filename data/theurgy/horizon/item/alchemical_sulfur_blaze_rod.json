@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:blaze_rod",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_blaze_rod",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_blaze_rod.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
+  }
+}

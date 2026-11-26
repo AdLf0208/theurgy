@@ -1,19 +1,15 @@
 [package]
-# Ported from: Theurgy 1.78.0 (klikli-dev/theurgy), Minecraft Java 1.21.1 NeoForge.
-# Local-only until the maintainer approves publishing (ARCHITECTURE.md §8). The Cargo
-# package name is not the mod's identity: the only identity is `id` in horizon-mod.toml.
+# Ported from: Theurgy 1.120.1 (klikli-dev/theurgy), Minecraft Java 26.3 NeoForge.
+# The Cargo package name is not the mod's identity: the only identity is `id` in horizon-mod.toml.
 name = "horizon-theurgy"
-version = "0.2.3"
+version = "0.3.0"
 edition = "2024"
-# This crate is the port's Rust code, and the code is MIT — the one SPDX expression a crate
-# can carry. The assets it carries beside the code (assets/, data/) are the upstream mod's,
-# under CC-BY-SA-4.0; LICENSE-NOTICE.md is the allocation and LICENSE-CC-BY-SA-4.0 is that
-# licence's text. A registry entry names the package as a whole: `MIT AND CC-BY-SA-4.0`.
+# The Rust code in src/ is MIT. Carried upstream assets (assets/, data/) are CC-BY-4.0
+# with third-party notices in LICENSE-NOTICE.md and THIRD_PARTY_NOTICES.md.
 license = "MIT"
-description = "Theurgy for Horizon: the calcination oven and its pyromantic brazier"
+description = "Theurgy for Horizon: classical alchemy machines, fluids, mercury flux, logistics, tools and the Hermetica"
 
 [dependencies]
-# The pinned SDK's API crate, fetched into .horizon/sdk/ by any `cargo horizon-mod`
-# command (the launcher builds against its own copy of the same build). Any other
-# registry dependency must be pinned with `horizon-launcher native-lock .` first.
+# The pinned SDK's API crate, fetched into .horizon/sdk/ by `cargo horizon-mod`.
+# `mod_api::serde_json` is re-exported directly by `horizon-mod-api`.
 horizon-mod-api = { path = ".horizon/sdk/api/crates/horizon-mod-api" }

@@ -1,0 +1,11 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_niter_gems_common",
+      "with": [
+        {"translate": "item.theurgy.alchemical_niter_gems_common.source"}
+      ]
+    }
+  }
+}

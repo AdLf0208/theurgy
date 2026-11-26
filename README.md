@@ -1,81 +1,47 @@
-# Theurgy — Horizon port (slice 1: the calcination oven)
+# Theurgy — Horizon SDK port (`0.3.0`)
 
-A native Horizon port of **Theurgy 1.78.0** (`klikli-dev/theurgy`): the **code is
-MIT**, the **assets are CC-BY-SA-4.0** — the licence text shipped at the carried tag
-says ShareAlike, and the port follows the text rather than the label. The Pyromantic
-Brazier burns furnace fuel, and the Calcination Oven above it turns one item into its
-alchemical salt — one blackstone into one Strata Salt, one packed ice into nine, one gem
-into two Mineral Salts, all in the jar's own 100 ticks.
+Full native Horizon SDK port (`api = "0.2"`, Minecraft 26.3, pinned Horizon `0a875da91dbb0fdcb7ba8c42c11341aa229af51a`) of **Theurgy 1.120.1** (`klikli-dev/theurgy`, `release/v26.3-1.120.1`).
 
-**LOCAL-ONLY** until the maintainer approves publishing (ARCHITECTURE.md §8). The code's
-MIT is rank 0; the assets' share-alike is rank 1 (publishable under the same licence with
-attribution). See [`LICENSE-NOTICE.md`](LICENSE-NOTICE.md).
+- **Rust code (`src/`, manifests)**: MIT (`LICENSE`, `LICENSE-MIT`, `LICENSES/MIT.txt`).
+- **Upstream assets & data (`assets/`, `data/`)**: CC-BY-4.0 (`LICENSE-CC-BY-4.0`, `LICENSES/CC-BY-4.0.txt`), with third-party notices in [`LICENSE-NOTICE.md`](LICENSE-NOTICE.md) and [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).
+- **Status**: compiles cleanly with `-D warnings` (0 warnings in both test and release builds), **119 unit tests passing**, **34/34 in-game scenarios passing** on Horizon `0a875da` (headless + Vulkan GPU GUI, including 3D render-reference silhouettes, Hermetica book, filter UI, wand, native sal ammoniac world fluid, worldgen, reformation, incubation chaos, logistics, filters, persistence, and `/theurgy` commands), and deterministic `cargo horizon-mod build` / `check` / `fits` passing. See [`notes.md`](notes.md) for the complete transfer map, bug fixes, and remaining API gap (`portal.rs`).
 
-Provenance is in [`FINDINGS.md`](FINDINGS.md), the carried and written content
-in [`CONTENT.md`](CONTENT.md), and the deviations, gaps and verification in
-[`notes.md`](notes.md).
+## What is ported
 
-## One file
-
-`theurgy.hmod` is the deliverable: one flat SDK package (`api = "0.2"`) that
-carries the **code** (`horizon-mod.toml`, `Cargo.toml`, `src/`) **and the
-content** (`assets/`, `data/`) in the same archive. There is no embedded-content
-injection and no `.hnmod` any more — Horizon's mod-API merge (#16941, launcher
-≥ 0.2.70) retired that container, and the launcher compiles the package's Rust
-against its own pinned game build.
-
-## What the slice does
-
-* `theurgy:pyromantic_brazier` — one fuel slot, furnace-fuel burn times, a `lit`
-  state that follows the burn; one coal is 1,600 ticks = 16 crafts.
-* `theurgy:calcination_oven` — one input and one output slot, a 100-tick
-  progress that only advances while the block **below** it is a lit brazier
-  (sampled once every 20 game ticks, as `HeatConsumerBehaviour` does), and the
-  jar's **86 calcination recipes** as data: 70 by item, 16 by tag (`#c:gems`,
-  `#c:ores`, `#minecraft:logs`, …), with the jar's own counts (packed ice → 9,
-  blue ice → 64, gems → 2, ores → 3, plant salt ×2 → creature salt).
-* Clicks: an item goes into the input (upstream's `TwoSlotItemHandlerBehaviour`),
-  an empty hand takes the output and then the input, the brazier takes fuel and
-  gives it back.
-* `/theurgy info <pos>`, `/theurgy recipe <item>` and `/theurgy recipes` for the
-  harness and for players who want the jar's numbers in text.
+- **Five processing machines + heat**: Pyromantic Brazier, Calcination Oven, Distiller, Liquefaction Cauldron, Fermentation Vat, Digestion Vat — driven by the pure `src/engine/` core and reload-stable server recipe cache (`tags_updated`).
+- **Sal Ammoniac native world fluid & apparatus**: `data/theurgy/horizon/fluid/sal_ammoniac.json` + `register_fluid_models` (still/flow/overlay sprites), Sal Ammoniac Accumulator & Tank, `fluid_util::interact_with_fluid_handler` bucket/tank clicks.
+- **Incubation, Reformation, Mercury Flux**: Incubator + 3 vessels (with `theurgy:tag` output resolution), Sulfuric Flux Emitter + source/target/result pedestals, Mercury Catalyst, Mercury Capacitor (per-side modes), Mercury Flux Emitter (separate Mercury Flux & FE buffers), Caloric Flux Emitter (`hotUntil`), and emitter point selection.
+- **Items & Tools**: Double-high apparatus placement/break, directional attachment survival, Divination Rods (attunement, 3D spherical scan, 2D distance bucket, durability, cooldown, sulfur-attuned crafting), Mercurial Wand (5 modes), Copper Wire, Nexus UUIDs, full `TooltipHandler` Shift/Ctrl tooltips, derivative jar item decorations, and `/theurgy` + `/theurgy_probe` + `/theurgy_filter` commands.
+- **Logistics & Filters**: Logistics Nexus, Connector Node, Item/Fluid Inserters & Extractors, Mercury Flux Connector, Capability Probe & Proxy, Copper Wire graphs, List & Attribute Filters (all 14 standard rules + 4 special rules + tag rules) over transactional `mod_api::ITEMS` / `mod_api::FLUIDS` + `move_resources`.
+- **Worldgen**: Data-driven 26.3 `worldgen/feature/sal_ammoniac_ore.json` + `worldgen/placed_feature/sal_ammoniac_ore.json` + `Registrar::declare_biome_modifier`.
+- **Client**: GeckoLib 5 `.geo.json` + `.animation.json` block entity renderer, `DigestionVatRenderer` vanilla parts, wire slack curves, reformation trails (glowing motes), emitter selection outlines, held-stack fit outlines, tank fluid quads, the sulfur/niter jar special item model (`theurgy:alchemical_derivative`), Modonomicon Hermetica book screen + per-player persistence, read-only recipe viewer, CodeDefinedGUI-style list and attribute filter screens, in-world and item HUDs, key mappings, and typed payloads (`theurgy:book`, `theurgy:wand_mode`, `theurgy:wand_frequency`, `theurgy:filter_edit`, `theurgy:selection`, `theurgy:hud_request`, `theurgy:hud_snapshot`). Zero `[[native.mixin]]` or `[[native.module]]` entries required.
 
 ## Layout
 
 ```
-horizon-mod.toml            the only manifest: id, version 0.2.2, api 0.2, [native] pins
-Cargo.toml                  one crate; the only dependency is horizon-mod-api from .horizon/sdk/
-src/lib.rs                  the one `impl Hooks` and the two block-entity Parts
-src/runtime.rs              the pure engine: 86 recipes, the oven, the brazier (17 tests)
-src/support.rs              game glue: block entities, heat, clicks, commands (+ 6 tests)
-assets/theurgy/             carried models/textures + 26.3 blockstates, item definitions, lang
-data/theurgy/               block/item declarations, recipes, loot, tags, creative tab
-theurgy.hmod                the deliverable
-tools/
-  gen_tag_members.py        tag membership, resolved once into JSON
-  gen_recipes.py            the jar's recipes → src/runtime.rs (`--check` guards drift)
-  assemble_content.py       the jar's assets + this port's declarations → assets/ + data/
-  e2e.sh                    the in-game scenario (default / SELFTEST / CONTROL_GAME)
-  parse_info.py             `/theurgy info` → shell fields
-notes.md FINDINGS.md CONTENT.md
+horizon-mod.toml        manifest: id "theurgy", version 0.3.0, api "0.2", [native] pins
+Cargo.toml              only dependency: horizon-mod-api (re-exports serde_json)
+src/
+  lib.rs                single #[mod_api::horizon_mod] impl Hooks
+  engine/               pure logic core (crafting, recipes, machines, wire, performance)
+  registry.rs           29 block entities, 30 components, containers, fluid/energy caps, biome modifier
+  recipes.rs            reload-stable recipe cache (9 Theurgy types + 3 vanilla cooking types)
+  host.rs, config.rs    NBT/crafting/tank/SDK helpers & optional JSON config
+  heat.rs, machines.rs  brazier & 5 processing machines + vat redstone/analog signal cache
+  fluids.rs, interactions.rs   sal ammoniac fluid models, accumulator/tank, apparatus clicks
+  incubation.rs, reformation.rs, flux.rs, selection.rs
+  items.rs, probe.rs, commands.rs
+  logistics.rs, filter.rs
+  render.rs, model_data.rs, book.rs, client.rs, recipe_client.rs, filter_client.rs
+assets/ data/           Theurgy 1.120.1 (26.3) content + worldgen feature + world fluid declaration
+theurgy.hmod            built deterministic SDK package (see RECEIPT.md)
 ```
 
-## Build
-
-Every step goes through a build slot from the campaign root, with `CARGO_INCREMENTAL=0`:
+## Build & validate
 
 ```sh
-cd ports/theurgy
-cargo test --offline                                  # 23 tests (17 runtime + 6 glue helpers)
-cargo clippy --all-targets --offline -- -D warnings
-cargo fmt --check
-rm -f Cargo.lock && cargo horizon-mod build           # -> target/horizon-mod/theurgy.hmod
-cp target/horizon-mod/theurgy.hmod ./theurgy.hmod
-cargo horizon-mod check theurgy.hmod
-cargo horizon-mod fits theurgy.hmod --build nightly
+RUSTFLAGS="-D warnings" cargo test --all-targets --offline
+rm -f Cargo.lock && cargo horizon-mod build
+cargo horizon-mod check target/horizon-mod/theurgy.hmod
+cargo horizon-mod fits target/horizon-mod/theurgy.hmod --build 0a875da
 ```
-
-The in-game scenario needs a game the launcher built with this package
-(`horizon-launcher native-build ports/theurgy --instance <i> --trust-native-code`)
-and then `GAME=<that horizon-client> tools/e2e.sh`; no launcher exists in this
-environment, so the run is a recorded gap.

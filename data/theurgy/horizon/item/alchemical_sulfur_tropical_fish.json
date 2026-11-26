@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:tropical_fish",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_tropical_fish",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_tropical_fish.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

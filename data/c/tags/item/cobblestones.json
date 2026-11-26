@@ -1,8 +1,8 @@
 {
   "values": [
-    "minecraft:cobbled_deepslate",
-    "minecraft:cobblestone",
-    "minecraft:infested_cobblestone",
-    "minecraft:mossy_cobblestone"
+    "#c:cobblestones/normal",
+    "#c:cobblestones/infested",
+    "#c:cobblestones/mossy",
+    "#c:cobblestones/deepslate"
   ]
 }

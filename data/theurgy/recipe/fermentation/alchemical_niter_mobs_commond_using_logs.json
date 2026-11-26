@@ -1,0 +1,16 @@
+{
+  "type": "theurgy:fermentation",
+  "category": "misc",
+  "fluid": {
+    "amount": 250,
+    "ingredient": "minecraft:water"
+  },
+  "ingredients": [
+    "#theurgy:alchemical_sulfurs/mobs/common/automatic_recipes",
+    "#minecraft:logs"
+  ],
+  "result": {
+    "id": "theurgy:alchemical_niter_mobs_commond"
+  },
+  "time": 200
+}

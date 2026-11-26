@@ -1,3 +1,11 @@
 {
-  "template": "minecraft:gunpowder"
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_salt_mineral",
+      "with": [
+        {"translate": "item.theurgy.alchemical_salt_mineral.source"}
+      ]
+    }
+  }
 }

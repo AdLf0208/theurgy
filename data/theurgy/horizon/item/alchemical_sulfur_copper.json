@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_tag": "c:ingots/copper",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_copper",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_copper.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.abundant"}
+      ]
+    }
+  }
+}

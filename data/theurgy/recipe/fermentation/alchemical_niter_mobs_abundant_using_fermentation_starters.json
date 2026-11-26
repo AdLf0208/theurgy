@@ -1,0 +1,16 @@
+{
+  "type": "theurgy:fermentation",
+  "category": "misc",
+  "fluid": {
+    "amount": 125,
+    "ingredient": "minecraft:water"
+  },
+  "ingredients": [
+    "#theurgy:alchemical_sulfurs/mobs/abundant",
+    "#theurgy:fermentation_starters"
+  ],
+  "result": {
+    "id": "theurgy:alchemical_niter_mobs_abundant"
+  },
+  "time": 200
+}

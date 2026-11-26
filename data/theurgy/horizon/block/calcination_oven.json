@@ -1,20 +1,49 @@
 {
-  "default_state": {
-    "lit": "false"
-  },
+  "template": "minecraft:furnace",
+  "item": true,
   "properties": {
-    "explosion_resistance": 1.0,
-    "hardness": 1.0,
-    "light": 0,
-    "map_color": 6,
+    "hardness": 1,
     "occludes": false,
+    "explosion_resistance": 1,
     "requires_tool": false,
     "sounds": "minecraft:copper_block"
   },
-  "state_properties": {
-    "lit": {
-      "type": "boolean"
+  "state_light": {"property": "lit", "values": {"true": 0}, "default": 0},
+  "shapes": {
+    "property": "half",
+    "values": {
+      "lower": [
+        [
+          0,
+          0,
+          0,
+          1,
+          1,
+          1
+        ]
+      ],
+      "upper": [
+        [
+          0,
+          0,
+          0,
+          1,
+          0.3125,
+          1
+        ]
+      ]
     }
   },
-  "template": "minecraft:copper_block"
+  "state_properties": {
+    "half": {
+      "type": "enum",
+      "values": [
+        "lower",
+        "upper"
+      ]
+    }
+  },
+  "default_state": {
+    "half": "lower"
+  }
 }

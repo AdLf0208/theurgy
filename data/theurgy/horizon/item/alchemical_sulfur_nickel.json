@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_nickel",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_nickel.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.common"}
+      ]
+    }
+  }
+}

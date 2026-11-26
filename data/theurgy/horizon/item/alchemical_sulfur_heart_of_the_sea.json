@@ -1,0 +1,13 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "theurgy:source_item": "minecraft:heart_of_the_sea",
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_heart_of_the_sea",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_heart_of_the_sea.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.precious"}
+      ]
+    }
+  }
+}

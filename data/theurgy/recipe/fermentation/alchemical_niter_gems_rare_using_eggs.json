@@ -1,0 +1,16 @@
+{
+  "type": "theurgy:fermentation",
+  "category": "misc",
+  "fluid": {
+    "amount": 500,
+    "ingredient": "minecraft:water"
+  },
+  "ingredients": [
+    "#theurgy:alchemical_sulfurs/gems/rare",
+    "#c:eggs"
+  ],
+  "result": {
+    "id": "theurgy:alchemical_niter_gems_rare"
+  },
+  "time": 200
+}

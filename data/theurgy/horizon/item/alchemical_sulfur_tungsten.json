@@ -1,0 +1,12 @@
+{
+  "template": "minecraft:diamond",
+  "components": {
+    "minecraft:item_name": {
+      "translate": "item.theurgy.alchemical_sulfur_tungsten",
+      "with": [
+        {"translate": "item.theurgy.alchemical_sulfur_tungsten.source"},
+        {"translate": "theurgytheurgy.alchemical_tier.rare"}
+      ]
+    }
+  }
+}
